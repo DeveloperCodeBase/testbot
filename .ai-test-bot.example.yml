@@ -1,0 +1,52 @@
+enabled_tests:
+  unit: true
+  integration: true
+  e2e: true
+
+coverage:
+  threshold: 80
+  prioritize_critical_paths: true
+  max_refinement_iterations: 3
+
+exclude_patterns:
+  - "**/node_modules/**"
+  - "**/vendor/**"
+  - "**/dist/**"
+  - "**/build/**"
+  - "**/target/**"
+  - "**/*.test.*"
+  - "**/*.spec.*"
+  - "**/__tests__/**"
+  - "**/tests/**"
+
+llm:
+  provider: "openai"  # Options: "openai", "claude", "gemini", "local"
+  model: "gpt-4"      # Or "gpt-3.5-turbo", "claude-3-opus", etc.
+  api_key: ""         # Set via environment variable OPENAI_API_KEY
+  max_tokens: 4000
+  temperature: 0.2
+  timeout: 60000      # milliseconds
+
+git:
+  enabled: false
+  auto_push: false
+  create_pr: false
+  branch_prefix: "ai-tests"
+
+adapters:
+  node: true
+  python: true
+  java: true
+  dotnet: false
+  go: false
+  php: false
+
+execution:
+  timeout: 300000     # 5 minutes per test suite
+  parallel: false     # Run test suites sequentially by default
+  retry_failed: true  # Retry failed tests once
+
+output:
+  format: ["json", "html"]
+  artifacts_dir: "./artifacts"
+  verbose: false
