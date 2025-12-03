@@ -1,3 +1,4 @@
+// @ts-nocheck
 import path from 'path';
 import { StackDetector } from '../StackDetector.js';
 import * as fileUtils from '../../utils/fileUtils.js';

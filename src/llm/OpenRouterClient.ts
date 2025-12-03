@@ -8,7 +8,7 @@ export class OpenRouterClient {
     private appName?: string;
 
     constructor() {
-        this.apiKey = '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';
+        this.apiKey = '';
         this.baseUrl = 'https://openrouter.ai/api/v1';
         this.appName = 'testbot1';
 

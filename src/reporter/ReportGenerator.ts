@@ -330,28 +330,23 @@ export class ReportGenerator {
             </table>
             ` : ''}
 
-            ${result.environmentIssues && result.environmentIssues.length > 0 ? `
-            <h3>Environment Issues (${result.environmentIssues.length})</h3>
-            ${result.environmentIssues.map(issue => `
+            ${result.issues && result.issues.length > 0 ? `
+            <h3>Detected Issues (${result.issues.length})</h3>
+            ${result.issues.map(issue => `
             <div class="issue-card ${issue.severity}">
                 <div class="issue-header">
-                    <span class="issue-title">[${issue.code}] ${issue.message}</span>
-                    <span class="badge ${issue.autoFixed ? 'passed' : 'failed'}">
-                        ${issue.autoFixed ? 'Auto-Fixed' : 'Outstanding'}
-                    </span>
+                    <span class="issue-title">[${issue.kind}] ${issue.message}</span>
+                    <span class="badge ${issue.severity}">${issue.severity.toUpperCase()}</span>
                 </div>
+                <p><strong>Stage:</strong> ${issue.stage} | <strong>Project:</strong> ${issue.project}</p>
                 <p>${issue.details || ''}</p>
                 
-                ${!issue.autoFixed && issue.remediation ? `
+                ${issue.suggestion ? `
                 <div class="remediation">
-                    <h5>Remediation Steps:</h5>
-                    ${issue.remediation.map(step => `
+                    <h5>Suggestion:</h5>
                     <div class="remediation-step">
-                        <strong>${step.title}</strong>: ${step.description}
-                        ${step.command ? `<code class="cmd-block">${step.command}</code>` : ''}
-                        ${step.filePath ? `<code class="cmd-block">File: ${step.filePath}</code>` : ''}
+                        ${issue.suggestion}
                     </div>
-                    `).join('')}
                 </div>
                 ` : ''}
             </div>

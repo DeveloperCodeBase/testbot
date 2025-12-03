@@ -16,14 +16,17 @@ export class CSharpEnvironmentHealer extends EnvironmentHealer {
     ): Promise<void> {
         logger.info(`Analyzing C# environment for project: ${project.name}`);
 
-        // 1. Check for .csproj file
+        // 1. Check for .NET SDK availability (critical)
+        await this.checkDotNetSdk(project, projectPath);
+
+        // 2. Check for .csproj file
         await this.checkProjectFile(project, projectPath);
 
-        // 2. Check for test framework packages
+        // 3. Check for test framework packages
         await this.checkTestFramework(project, projectPath);
 
-        // 3. Check for SDK compatibility
-        await this.checkDotNetSdk(project, projectPath);
+        // 4. Check for coverage tooling
+        await this.checkCoverageTool(project, projectPath);
     }
 
     async heal(projectPath: string): Promise<void> {
@@ -37,7 +40,15 @@ export class CSharpEnvironmentHealer extends EnvironmentHealer {
             }
         }
 
-        // 2. Create test project if missing
+        // 2. Install coverage tool
+        const coverageIssues = this.issues.filter(i => i.code === 'MISSING_COVERAGE_TOOL' && !i.autoFixed);
+        for (const issue of coverageIssues) {
+            if (this.canUpdateConfig() && issue.details) {
+                await this.installPackage(projectPath, issue.details, issue.code);
+            }
+        }
+
+        // 3. Create test project if missing
         const projectIssues = this.issues.filter(i => i.code === 'MISSING_TEST_PROJECT' && !i.autoFixed);
         for (const issue of projectIssues) {
             if (this.canUpdateConfig()) {
@@ -126,19 +137,66 @@ export class CSharpEnvironmentHealer extends EnvironmentHealer {
         }
     }
 
-    private async checkDotNetSdk(_project: ProjectDescriptor, _projectPath: string): Promise<void> {
+    private async checkDotNetSdk(project: ProjectDescriptor, _projectPath: string): Promise<void> {
         try {
             const result = await execAsync('dotnet --version');
             logger.info(`Detected .NET SDK version: ${result.stdout.trim()}`);
         } catch (error) {
             this.addIssue(
-                _project.name,
+                project.name,
                 'env-setup',
                 'error',
-                'MISSING_SDK',
+                'MISSING_DOTNET_SDK',
                 '.NET SDK not installed or not in PATH',
-                'Install .NET SDK from https://dotnet.microsoft.com/download'
+                'Install .NET SDK to build and test C# projects'
             );
+
+            // Add OS-specific remediation
+            const platform = process.platform;
+            if (platform === 'win32') {
+                this.addRemediation('MISSING_DOTNET_SDK', [{
+                    title: 'Install .NET SDK on Windows',
+                    description: 'Download and install .NET SDK for Windows. Alternatives: choco install dotnet-sdk, or download from https://dotnet.microsoft.com/download',
+                    command: 'winget install Microsoft.DotNet.SDK.8'
+                }]);
+            } else if (platform === 'darwin') {
+                this.addRemediation('MISSING_DOTNET_SDK', [{
+                    title: 'Install .NET SDK on macOS',
+                    description: 'Install .NET SDK via Homebrew or download from https://dotnet.microsoft.com/download',
+                    command: 'brew install --cask dotnet-sdk'
+                }]);
+            } else {
+                this.addRemediation('MISSING_DOTNET_SDK', [{
+                    title: 'Install .NET SDK on Linux',
+                    description: 'Install .NET SDK via package manager. Alternatives: sudo snap install dotnet-sdk --classic, or download from https://dotnet.microsoft.com/download',
+                    command: 'sudo apt-get update && sudo apt-get install -y dotnet-sdk-8.0'
+                }]);
+            }
+        }
+    }
+
+    private async checkCoverageTool(project: ProjectDescriptor, projectPath: string): Promise<void> {
+        const csprojFiles = await this.findCsprojFiles(projectPath);
+
+        for (const csprojFile of csprojFiles) {
+            const content = await readFile(csprojFile);
+
+            // Check for coverlet.collector
+            if (!content.includes('coverlet.collector') && !content.includes('coverlet.msbuild')) {
+                this.addIssue(
+                    project.name,
+                    'analysis',
+                    'warning',
+                    'MISSING_COVERAGE_TOOL',
+                    'Missing coverlet for code coverage',
+                    'coverlet.collector'
+                );
+                this.addRemediation('MISSING_COVERAGE_TOOL', [{
+                    title: 'Install Coverlet',
+                    description: 'Add coverlet.collector for code coverage',
+                    command: 'dotnet add package coverlet.collector'
+                }]);
+            }
         }
     }
 

@@ -130,9 +130,19 @@ export class PythonEnvironmentHealer extends EnvironmentHealer {
         }
 
         // 4. Fix pytest pattern mismatches
-        const patternIssue = this.issues.find(i => i.code === 'PYTEST_PATTERN_MISMATCH' && !i.autoFixed);
-        if (patternIssue && this.canUpdateConfig()) {
-            await this.autoFixPytestPatterns(projectPath, patternIssue.code);
+        const patternIssue = this.issues.filter(i => i.code === 'PYTEST_PATTERN_MISMATCH' && !i.autoFixed);
+        for (const issue of patternIssue) {
+            if (this.canUpdateConfig()) {
+                await this.autoFixPytestPatterns(projectPath, issue.code);
+            }
+        }
+
+        // 5. Install generic missing dependencies (from execution errors)
+        const depIssues = this.issues.filter(i => i.code === 'MISSING_DEP' && !i.autoFixed);
+        for (const issue of depIssues) {
+            if (this.canInstallDependencies() && issue.details) {
+                await this.installPackage(projectPath, issue.details, issue.code);
+            }
         }
     }
 
@@ -281,26 +291,48 @@ python_files = test_*.py
         const pythonFilesMatch = content.match(/python_files\s*=\s*(.+)/);
         if (pythonFilesMatch) {
             const currentPatterns = pythonFilesMatch[1].trim();
-            const updatedPatterns = currentPatterns + ' ' + neededPatterns.join(' ');
-            content = content.replace(
-                /python_files\s*=\s*.+/,
-                `python_files = ${updatedPatterns}`
-            );
+            const currentPatternList = currentPatterns.split(/\s+/);
 
-            await writeFile(iniPath, content);
+            // Only add patterns that don't already exist
+            const newPatternsToAdd = neededPatterns.filter(p => !currentPatternList.includes(p));
 
-            const action = {
-                project: path.basename(projectPath),
-                path: iniPath,
-                command: 'update-file',
-                description: `Updated pytest.ini to include patterns: ${neededPatterns.join(', ')}`,
-                success: true,
-                timestamp: new Date().toISOString()
-            };
-            this.actions.push(action);
+            if (newPatternsToAdd.length > 0) {
+                const updatedPatterns = currentPatterns + ' ' + newPatternsToAdd.join(' ');
+                content = content.replace(
+                    /python_files\s*=\s*.+/,
+                    `python_files = ${updatedPatterns}`
+                );
+
+                await writeFile(iniPath, content);
+
+                this.actions.push({
+                    project: path.basename(projectPath),
+                    path: iniPath,
+                    command: 'update-file',
+                    description: `Updated pytest.ini to include patterns: ${newPatternsToAdd.join(', ')}`,
+                    success: true,
+                    timestamp: new Date().toISOString()
+                });
+                this.markIssueFixed(issueCode, [this.actions[this.actions.length - 1]]);
+
+                logger.info(`Auto-fixed pytest.ini patterns in ${projectPath}`);
+            }
+        }
+    }
+    private async installPackage(projectPath: string, packageName: string, issueCode: string): Promise<void> {
+        const pipCmd = path.join('.venv', 'bin', 'pip');
+        // Fallback to python3 -m pip if venv pip doesn't exist?
+        // For now assume venv structure.
+
+        const action = await this.executeCommand(
+            `${pipCmd} install ${packageName}`,
+            projectPath,
+            `Install package ${packageName}`,
+            path.basename(projectPath)
+        );
+
+        if (action.success) {
             this.markIssueFixed(issueCode, [action]);
-
-            logger.info(`Auto-fixed pytest.ini patterns in ${projectPath}`);
         }
     }
 }

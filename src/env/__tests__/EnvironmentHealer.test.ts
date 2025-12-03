@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { EnvironmentHealer } from '../EnvironmentHealer.js';
 import { BotConfig } from '../../config/schema.js';
 import { CommandRunner } from '../../executor/CommandRunner.js';

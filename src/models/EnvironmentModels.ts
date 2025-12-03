@@ -43,11 +43,14 @@ export interface EnvironmentIssue {
     project: string;
     stage: IssueStage;
     severity: IssueSeverity;
-    code: string;  // e.g. 'MISSING_DEV_DEP', 'CONFIG_MISMATCH', 'MISSING_TEST_RUNNER'
+    code: string;  // e.g. 'MISSING_DEV_DEP', 'CONFIG_MISMATCH', 'MISSING_TEST_RUNNER', 'TEST_SYNTAX_ERROR'
     message: string;
     details?: string;
     filePath?: string; // User-visible file path (project files, config files, not internal stack traces)
+    line?: number;     // Line number for syntax errors
+    column?: number;   // Column number for syntax errors
     autoFixed: boolean;
     autoFixActions?: AutoFixAction[];
     remediation?: RemediationStep[];
+    timestamp?: string;
 }

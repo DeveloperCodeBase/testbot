@@ -3,7 +3,7 @@ import { RepoManager } from '../repo/RepoManager.js';
 import { StackDetector } from '../analyzer/StackDetector.js';
 import { TestGenerator } from '../generator/TestGenerator.js';
 import { TestExecutor } from '../executor/TestExecutor.js';
-import { JobResult, TestRunResult } from '../models/TestRunResult.js';
+import { JobResult, TestRunResult, JobIssue } from '../models/TestRunResult.js';
 import { BotConfig } from '../config/schema.js';
 import logger from '../utils/logger.js';
 import { ensureDir } from '../utils/fileUtils.js';
@@ -351,7 +351,53 @@ export class JobOrchestrator {
                 suitesWithDiscoveryErrors,
                 reason,
             },
+            issues: this.buildJobIssues(allEnvIssues, projectResults)
         };
+    }
+
+    /**
+     * Convert EnvironmentIssues to JobIssues and add coverage issues
+     */
+    private buildJobIssues(
+        envIssues: EnvironmentIssue[],
+        projectResults: TestRunResult[]
+    ): JobIssue[] {
+        const issues: JobIssue[] = [];
+
+        // Convert all EnvironmentIssues to JobIssues
+        envIssues.forEach(envIssue => {
+            const stage: JobIssue['stage'] =
+                envIssue.stage === 'analysis' ? 'env_heal' :
+                    envIssue.stage === 'generation' ? 'generate' :
+                        envIssue.stage === 'execution' ? 'execute' :
+                            envIssue.stage === 'env-setup' ? 'env_heal' : 'env_heal';
+
+            issues.push({
+                project: envIssue.project,
+                stage,
+                kind: envIssue.code,
+                severity: envIssue.severity,
+                message: envIssue.message,
+                suggestion: envIssue.remediation?.[0]?.description || 'See details for remediation steps',
+                details: envIssue.details
+            });
+        });
+
+        // Add coverage issues for projects where coverage wasn't collected
+        projectResults.forEach(p => {
+            if (!p.coverage || (p.coverage.overall.statements.total === 0 && p.coverage.overall.lines.total === 0)) {
+                issues.push({
+                    project: p.project,
+                    stage: 'coverage',
+                    kind: 'COVERAGE_NOT_COLLECTED',
+                    severity: 'error',
+                    message: 'Tests failed before coverage could be collected',
+                    suggestion: 'Fix test execution errors first, then coverage will be generated'
+                });
+            }
+        });
+
+        return issues;
     }
 
     /**
@@ -384,7 +430,16 @@ export class JobOrchestrator {
                 totalTests: 0,
                 passedTests: 0,
                 failedTests: 0,
+                reason: 'Job failed during initialization'
             },
+            issues: [{
+                project: 'all',
+                stage: 'env_heal',
+                kind: 'INITIALIZATION_ERROR',
+                severity: 'error',
+                message: errors.join('; '),
+                suggestion: 'Check the error details and verify the repository path'
+            }]
         };
     }
 

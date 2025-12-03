@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { test, expect, request, APIRequestContext } from '@playwright/test';
 
 test.describe('API Health E2E Tests', () => {

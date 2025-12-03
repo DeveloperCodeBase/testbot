@@ -58,8 +58,8 @@ export class CSharpAdapter implements LanguageAdapter {
     }
 
     getCoverageCommand(_project: ProjectDescriptor): string | null {
-        // Use coverlet for code coverage
-        return 'dotnet test --collect:"XPlat Code Coverage"';
+        // Use coverlet to collect coverage in Cobertura format
+        return 'dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura /p:CoverletOutput=./coverage.xml';
     }
 
     getTestFilePath(sourceFile: string, testType: 'unit' | 'integration' | 'e2e', _project: ProjectDescriptor): string {

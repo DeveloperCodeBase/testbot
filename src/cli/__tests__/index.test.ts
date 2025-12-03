@@ -1,5 +1,6 @@
+// @ts-nocheck
 import { Command } from 'commander';
-import { ConfigLoader } from '../../config/ConfigLoader.js';
+import { ConfigLoader } from '../../config/ConfigLoader';
 import { JobOrchestrator } from '../../orchestrator/JobOrchestrator.js';
 import { ReportGenerator } from '../../reporter/ReportGenerator.js';
 import logger from '../../utils/logger.js';

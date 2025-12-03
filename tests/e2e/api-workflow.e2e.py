@@ -1,140 +1,133 @@
 # filename: tests/e2e/test_api_workflow.py
 import pytest
 import requests
-from requests.exceptions import ConnectionError, Timeout
+from requests.exceptions import RequestException
 
 @pytest.fixture(scope="module")
 def base_url():
-    # Assuming the API server is running locally on port 8000
-    return "http://localhost:8000/api"
+    # Base URL for API endpoints
+    return "http://localhost:8000"
 
 @pytest.fixture
 def client():
-    # Initialize a requests session for connection pooling and reuse
-    session = requests.Session()
-    yield session
-    session.close()
+    # In real scenario, this could be a requests.Session or a custom client
+    with requests.Session() as session:
+        yield session
 
-def test_api_workflow_success(client, base_url):
+@pytest.fixture
+def auth_token(client, base_url):
+    # If user authentication is required, obtain token here
+    # Assuming a login endpoint - /api/login which returns JSON token
+    # If auth not required, yield None
+    login_url = f"{base_url}/api/login"
+    credentials = {"username": "testuser", "password": "testpass"}
+    try:
+        response = client.post(login_url, json=credentials)
+        response.raise_for_status()
+        token = response.json().get("token")
+        yield token
+    except RequestException:
+        # Authentication failed or not required
+        yield None
+
+def test_api_workflow_success(client, base_url, auth_token):
     """
-    Test complete API workflow end-to-end:
-    - Initialize client
-    - Authenticate user (if required)
-    - Call all intermediate steps of the /api endpoint workflow
-    - Verify successful responses and expected outcomes
+    End-to-end test that verifies the complete API workflow:
+    1) Initializes client session
+    2) Authenticates user (if required)
+    3) Calls /api endpoint with proper headers and payload
+    4) Verifies successful response and expected output
     """
-    # Step 1: Authenticate user (assume token-based auth endpoint /api/auth/login)
-    auth_payload = {"username": "testuser", "password": "correct_password"}
-    auth_resp = client.post(f"{base_url}/auth/login", json=auth_payload)
-    assert auth_resp.status_code == 200, "Authentication failed with correct credentials"
-    auth_data = auth_resp.json()
-    assert "token" in auth_data, "Auth token missing in response"
-    token = auth_data["token"]
 
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
 
-    # Step 2: Call the primary API endpoint - example POST /api/data to create resource
-    data_payload = {"item_name": "Test Item", "quantity": 5}
-    create_resp = client.post(f"{base_url}/data", json=data_payload, headers=headers)
-    assert create_resp.status_code == 201, "Resource creation failed"
-    create_data = create_resp.json()
-    assert "id" in create_data and create_data["item_name"] == "Test Item" and create_data["quantity"] == 5
+    api_url = f"{base_url}/api"
 
-    resource_id = create_data["id"]
+    # Example payload for the API endpoint
+    payload = {"action": "start", "data": {"key": "value"}}
 
-    # Step 3: Retrieve the created resource via GET /api/data/{id}
-    get_resp = client.get(f"{base_url}/data/{resource_id}", headers=headers)
-    assert get_resp.status_code == 200, "Failed to fetch created resource"
-    get_data = get_resp.json()
-    assert get_data == create_data, "Fetched data does not match created data"
+    # Step 1: Call API endpoint
+    response = client.post(api_url, json=payload, headers=headers)
+    assert response.status_code == 200, f"Expected 200 OK, got {response.status_code}"
 
-    # Step 4: Update resource via PUT /api/data/{id}
-    update_payload = {"quantity": 10}
-    update_resp = client.put(f"{base_url}/data/{resource_id}", json=update_payload, headers=headers)
-    assert update_resp.status_code == 200, "Failed to update resource"
-    update_data = update_resp.json()
-    assert update_data["quantity"] == 10, "Resource quantity not updated"
+    resp_json = response.json()
+    # Expected keys in response, adjust according to API spec
+    assert "status" in resp_json
+    assert resp_json["status"] == "success"
+    assert "result" in resp_json
 
-    # Step 5: Delete resource via DELETE /api/data/{id}
-    delete_resp = client.delete(f"{base_url}/data/{resource_id}", headers=headers)
-    assert delete_resp.status_code == 204, "Failed to delete resource"
+    # Step 2: Call intermediate step if needed (simulate workflow progression)
+    # Example: next API call after start
+    payload_next = {"action": "continue", "session_id": resp_json["result"].get("session_id")}
+    response_next = client.post(api_url, json=payload_next, headers=headers)
+    assert response_next.status_code == 200
+    resp_next_json = response_next.json()
+    assert resp_next_json.get("status") == "success"
+    assert "progress" in resp_next_json
 
-    # Step 6: Verify resource no longer exists
-    get_after_delete_resp = client.get(f"{base_url}/data/{resource_id}", headers=headers)
-    assert get_after_delete_resp.status_code == 404, "Deleted resource still accessible"
+    # Step 3: Finalize workflow
+    payload_finalize = {"action": "finish", "session_id": resp_json["result"].get("session_id")}
+    response_finalize = client.post(api_url, json=payload_finalize, headers=headers)
+    assert response_finalize.status_code == 200
+    resp_finalize_json = response_finalize.json()
+    assert resp_finalize_json.get("status") == "completed"
 
-def test_api_authentication_failure(client, base_url):
+def test_api_workflow_auth_failure(client, base_url):
     """
-    Verify authentication failure with invalid credentials
+    Verify that API rejects unauthorized access when authentication required
     """
-    bad_auth_payload = {"username": "testuser", "password": "wrong_password"}
-    resp = client.post(f"{base_url}/auth/login", json=bad_auth_payload)
-    assert resp.status_code == 401, "Authentication succeeded with invalid credentials"
-    data = resp.json()
-    assert "error" in data
+    api_url = f"{base_url}/api"
+    payload = {"action": "start"}
 
-@pytest.mark.parametrize("endpoint,method,payload,expected_status", [
-    ("/data", "POST", {}, 400),  # Empty payload for creation
-    ("/data/999999", "GET", None, 404),  # Nonexistent resource ID
-    ("/data/abc", "GET", None, 400),  # Invalid resource ID format
-])
-def test_api_invalid_requests(client, base_url, endpoint, method, payload, expected_status):
+    # Call without auth headers or with invalid token
+    headers = {"Authorization": "Bearer invalidtoken"}
+
+    response = client.post(api_url, json=payload, headers=headers)
+    assert response.status_code in (401, 403), "Expected unauthorized status code"
+
+def test_api_workflow_invalid_payload(client, base_url, auth_token):
     """
-    Test API endpoints with invalid inputs and verify proper error responses
+    Verify API returns proper error responses on invalid payloads
     """
-    # Perform authentication first
-    auth_resp = client.post(f"{base_url}/auth/login", json={"username": "testuser", "password": "correct_password"})
-    token = auth_resp.json().get("token", "")
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    headers = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    api_url = f"{base_url}/api"
 
-    url = f"{base_url}{endpoint}"
-    if method == "POST":
-        resp = client.post(url, json=payload, headers=headers)
-    elif method == "GET":
-        resp = client.get(url, headers=headers)
-    elif method == "PUT":
-        resp = client.put(url, json=payload or {}, headers=headers)
-    elif method == "DELETE":
-        resp = client.delete(url, headers=headers)
-    else:
-        pytest.skip(f"Unsupported method: {method}")
+    # Missing required fields in payload
+    invalid_payload = {"invalid_field": "data"}
 
-    assert resp.status_code == expected_status, f"Expected {expected_status}, got {resp.status_code}"
+    response = client.post(api_url, json=invalid_payload, headers=headers)
+    assert response.status_code == 400, "Expected 400 Bad Request for invalid payload"
 
-def test_api_workflow_network_error(monkeypatch, client, base_url):
+    resp_json = response.json()
+    assert "error" in resp_json
+    assert isinstance(resp_json["error"], str)
+
+def test_api_workflow_server_error_handling(client, base_url, auth_token, monkeypatch):
     """
-    Simulate network errors to verify client retries or error handling
+    Simulate server-side error and verify API handles it gracefully
     """
-    def raise_connection_error(*args, **kwargs):
-        raise ConnectionError("Simulated connection error")
 
-    # Patch client's post method to simulate connection error during auth
-    monkeypatch.setattr(client, "post", raise_connection_error)
+    headers = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    api_url = f"{base_url}/api"
 
-    with pytest.raises(ConnectionError):
-        client.post(f"{base_url}/auth/login", json={"username": "testuser", "password": "any"})
+    # We simulate the server being unreachable by monkeypatching requests.post
+    # Note: since we use requests directly, monkeypatch requests.Session.post
 
-def test_api_auth_token_required(client, base_url):
-    """
-    Verify that accessing protected endpoints without auth token returns 401
-    """
-    protected_endpoints = [
-        (f"{base_url}/data", "POST"),
-        (f"{base_url}/data/1", "GET"),
-        (f"{base_url}/data/1", "PUT"),
-        (f"{base_url}/data/1", "DELETE"),
-    ]
-    for url, method in protected_endpoints:
-        if method == "POST":
-            resp = client.post(url, json={"item_name": "test"}, headers={})
-        elif method == "GET":
-            resp = client.get(url, headers={})
-        elif method == "PUT":
-            resp = client.put(url, json={"quantity": 5}, headers={})
-        elif method == "DELETE":
-            resp = client.delete(url, headers={})
-        else:
-            continue
-        assert resp.status_code == 401, f"Expected 401 Unauthorized for {method} {url} without token"
-        data = resp.json()
-        assert "error" in data
+    original_post = client.post
+
+    def failing_post(*args, **kwargs):
+        raise requests.exceptions.ConnectionError("Simulated connection failure")
+
+    monkeypatch.setattr(client, "post", failing_post)
+
+    with pytest.raises(requests.exceptions.ConnectionError):
+        client.post(api_url, json={"action": "start"}, headers=headers)
+
+    # Restore original
+    monkeypatch.setattr(client, "post", original_post)

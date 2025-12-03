@@ -7,6 +7,11 @@ import { BotConfig } from '../config/schema.js';
 import logger from '../utils/logger.js';
 import path from 'path';
 import { fileExists, findFiles } from '../utils/fileUtils.js';
+import { JestAutoFixLoop } from './JestAutoFixLoop.js';
+import { PytestAutoFixLoop } from './PytestAutoFixLoop.js';
+import { NodeEnvironmentHealer } from '../env/NodeEnvironmentHealer.js';
+import { PythonEnvironmentHealer } from '../env/PythonEnvironmentHealer.js';
+import { CoverageAnalyzer } from '../analyzer/CoverageAnalyzer.js';
 
 /**
  * Executes tests and collects results
@@ -32,7 +37,8 @@ export class TestExecutor {
         projectPath: string,
         testTypes: ('unit' | 'integration' | 'e2e')[],
         envIssues: EnvironmentIssue[] = [],
-        envActions: AutoFixAction[] = []
+        envActions: AutoFixAction[] = [],
+        generatedFiles: string[] = []
     ): Promise<TestRunResult> {
         logger.info(`Executing tests for project: ${project.name}`);
 
@@ -55,6 +61,36 @@ export class TestExecutor {
             }
         }
 
+        // Auto-fix Loop (Dynamic Healing)
+        // Run specific auto-fix loops based on language to ensure environment is ready
+        if (project.language === 'typescript' || project.language === 'javascript') {
+            const healer = new NodeEnvironmentHealer(this.config);
+            const loop = new JestAutoFixLoop();
+            const loopResult = await loop.executeWithAutoFix(project, projectPath, healer, generatedFiles);
+
+            // Merge results
+            envIssues.push(...loopResult.finalIssues);
+            envActions.push(...loopResult.finalActions);
+
+            if (!loopResult.success && loopResult.hardBlocker) {
+                logger.error(`Jest auto-fix failed: ${loopResult.hardBlocker}`);
+                // We can either return early or try to run anyway. 
+                // If hard blocker, running will likely fail.
+                // But let's let it fall through to standard execution which will report the failure details.
+            }
+        } else if (project.language === 'python') {
+            const healer = new PythonEnvironmentHealer(this.config);
+            const loop = new PytestAutoFixLoop();
+            const loopResult = await loop.executeWithAutoFix(project, projectPath, healer, generatedFiles);
+
+            envIssues.push(...loopResult.finalIssues);
+            envActions.push(...loopResult.finalActions);
+
+            if (!loopResult.success && loopResult.hardBlocker) {
+                logger.error(`Pytest auto-fix failed: ${loopResult.hardBlocker}`);
+            }
+        }
+
         // Execute each test type
         for (const testType of testTypes) {
             if (!this.shouldRunTestType(testType)) {
@@ -74,6 +110,20 @@ export class TestExecutor {
         const totalDuration = Date.now() - startTime;
         const overallStatus = this.determineOverallStatus(testSuites);
 
+        // Parse coverage if enabled
+        let coverage;
+        if (this.config.coverage && this.config.coverage.threshold > 0) {
+            try {
+                const analyzer = new CoverageAnalyzer();
+                const report = await analyzer.analyzeCoverage(project, projectPath);
+                if (report) {
+                    coverage = report;
+                }
+            } catch (error) {
+                logger.warn(`Failed to parse coverage for ${project.name}: ${error}`);
+            }
+        }
+
         return {
             project: project.name,
             projectPath: project.path,
@@ -86,6 +136,7 @@ export class TestExecutor {
             generatedTestFiles: [],
             environmentIssues: envIssues,
             autoFixActions: envActions,
+            coverage
         };
     }
 

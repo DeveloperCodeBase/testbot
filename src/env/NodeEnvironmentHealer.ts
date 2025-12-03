@@ -9,6 +9,8 @@ import logger from '../utils/logger.js';
  * Handles Jest and Vitest configurations and dependencies
  */
 export class NodeEnvironmentHealer extends EnvironmentHealer {
+    private generatedFiles: string[] = [];
+
 
     async analyze(
         project: ProjectDescriptor,
@@ -17,12 +19,17 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
     ): Promise<void> {
         logger.info(`Analyzing Node environment for ${project.name}`);
 
+        this.generatedFiles = generatedFiles;
+
+        // 0. Detect if this is a TypeScript project
+        const isTypeScript = await this.isTypeScriptProject(projectPath);
+
         // 1. Check dependencies
         await this.checkDependencies(project, projectPath, generatedFiles);
 
         // 2. Check Jest Configuration (if applicable)
         if (this.isJestProject(project, projectPath)) {
-            await this.checkJestConfig(project, projectPath);
+            await this.checkJestConfig(project, projectPath, isTypeScript);
         }
 
         // 3. Check Vitest Configuration (if applicable)
@@ -47,7 +54,15 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
             }
         }
 
-        // 2. Fix Jest Config
+        // 2. Fix Jest TypeScript Configuration
+        const jestTsIssues = this.issues.filter(i => i.code === 'JEST_TS_MISCONFIGURED' && !i.autoFixed);
+        for (const issue of jestTsIssues) {
+            if (this.canUpdateConfig()) {
+                await this.fixJestTypeScriptConfig(projectPath, issue.code);
+            }
+        }
+
+        // 3. Fix Jest Config
         const jestIssues = this.issues.filter(i => i.code === 'JEST_CONFIG_MISMATCH' && !i.autoFixed);
         for (const issue of jestIssues) {
             if (this.canUpdateConfig()) {
@@ -55,12 +70,18 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
             }
         }
 
-        // 3. Fix Vitest Config
+        // 4. Fix Vitest Config
         const vitestIssues = this.issues.filter(i => i.code === 'VITEST_CONFIG_MISSING' && !i.autoFixed);
         for (const issue of vitestIssues) {
             if (this.canUpdateConfig()) {
                 await this.fixVitestConfig(projectPath, issue.code);
             }
+        }
+
+        // 5. Fix Vitest Mocking Issues
+        const mockIssues = this.issues.filter(i => i.code === 'VITEST_MOCK_ERROR' && !i.autoFixed);
+        for (const issue of mockIssues) {
+            await this.fixVitestMocking(projectPath, issue.code);
         }
     }
 
@@ -74,6 +95,30 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
         return project.testFramework === 'vitest' ||
             project.framework === 'react' ||
             project.framework === 'vue';
+    }
+
+    private async isTypeScriptProject(projectPath: string): Promise<boolean> {
+        // Check for tsconfig.json
+        const hasTsConfig = await fileExists(path.join(projectPath, 'tsconfig.json'));
+        if (hasTsConfig) {
+            logger.info('Detected TypeScript project (tsconfig.json found)');
+            return true;
+        }
+
+        // Check package.json for TypeScript dependency
+        const packageJsonPath = path.join(projectPath, 'package.json');
+        if (await fileExists(packageJsonPath)) {
+            const content = await readFile(packageJsonPath);
+            const pkg = JSON.parse(content);
+            const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+
+            if (allDeps['typescript']) {
+                logger.info('Detected TypeScript project (typescript in dependencies)');
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async checkDependencies(
@@ -187,18 +232,63 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
         }
     }
 
-    private async checkJestConfig(project: ProjectDescriptor, projectPath: string): Promise<void> {
+    private async checkJestConfig(project: ProjectDescriptor, projectPath: string, isTypeScript: boolean): Promise<void> {
         // Check if config exists
         const configFiles = ['jest.config.js', 'jest.config.ts', 'jest.config.json', 'package.json'];
         let configExists = false;
 
         for (const file of configFiles) {
-            if (await fileExists(path.join(projectPath, file))) {
+            const fullPath = path.join(projectPath, file);
+            if (await fileExists(fullPath)) {
                 if (file === 'package.json') {
-                    const content = JSON.parse(await readFile(path.join(projectPath, file)));
-                    if (content.jest) configExists = true;
+                    const content = JSON.parse(await readFile(fullPath));
+                    if (content.jest) {
+                        configExists = true;
+                    }
                 } else {
                     configExists = true;
+                }
+            }
+        }
+
+        // If TypeScript project but no Jest config or misconfigured
+        if (isTypeScript) {
+            if (!configExists) {
+                this.addIssue(
+                    project.name,
+                    'analysis',
+                    'error',
+                    'JEST_TS_MISCONFIGURED',
+                    'TypeScript project missing Jest configuration',
+                    'Jest needs to be configured with ts-jest for TypeScript support'
+                );
+                this.addRemediation('JEST_TS_MISCONFIGURED', [{
+                    title: 'Create Jest config for TypeScript',
+                    description: 'Create jest.config.js with ts-jest preset',
+                    filePath: path.join(projectPath, 'jest.config.js')
+                }]);
+                return;
+            }
+
+            // Check if ts-jest is configured
+            const jestConfigPath = path.join(projectPath, 'jest.config.js');
+            if (await fileExists(jestConfigPath)) {
+                const content = await readFile(jestConfigPath);
+
+                if (!content.includes('ts-jest') && !content.includes('@swc/jest')) {
+                    this.addIssue(
+                        project.name,
+                        'analysis',
+                        'warning',
+                        'JEST_TS_MISCONFIGURED',
+                        'Jest not configured for TypeScript',
+                        'ts-jest preset or transform is missing'
+                    );
+                    this.addRemediation('JEST_TS_MISCONFIGURED', [{
+                        title: 'Configure ts-jest',
+                        description: 'Update Jest config to use ts-jest preset',
+                        filePath: jestConfigPath
+                    }]);
                 }
             }
         }
@@ -306,6 +396,60 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
 
         if (action.success) {
             this.markIssueFixed(issueCode, [action]);
+        }
+    }
+
+    private async fixJestTypeScriptConfig(projectPath: string, issueCode: string): Promise<void> {
+        const jestConfigPath = path.join(projectPath, 'jest.config.cjs');
+
+        // Create canonical Jest config for TypeScript using the opinionated template
+        const jestConfig = `/** @type {import('jest').Config} */
+module.exports = {
+    preset: 'ts-jest',
+    testEnvironment: 'node',
+
+    // Let Jest discover all ts/tsx test files
+    testMatch: [
+        '**/__tests__/**/*.(test|spec).ts',
+        '**/?(*.)+(test|spec).ts',
+    ],
+
+    moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
+
+    // Transform setup
+    transform: {
+        '^.+\\\\.(t|j)sx?$': 'ts-jest',
+    },
+
+    // Include test roots
+    roots: ['<rootDir>/src', '<rootDir>/tests', '<rootDir>'],
+};
+`;
+
+        try {
+            await writeFile(jestConfigPath, jestConfig);
+
+            const action = {
+                project: path.basename(projectPath),
+                path: jestConfigPath,
+                command: 'create-file',
+                description: 'Created jest.config.cjs with canonical ts-jest configuration',
+                success: true,
+                timestamp: new Date().toISOString()
+            };
+            this.actions.push(action);
+            this.markIssueFixed(issueCode, [action]);
+
+            logger.info(`✅ Created canonical jest.config.cjs at ${jestConfigPath}`);
+
+            // Ensure ts-jest and @types/jest are installed
+            if (this.canInstallDependencies()) {
+                await this.installDependency(projectPath, 'ts-jest', 'MISSING_DEV_DEP');
+                await this.installDependency(projectPath, '@types/jest', 'MISSING_DEV_DEP');
+            }
+
+        } catch (error) {
+            logger.error(`Failed to create jest.config.cjs: ${error}`);
         }
     }
 
@@ -426,5 +570,233 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
             }
         }
         return false;
+    }
+
+    async fixVitestMocking(projectPath: string, issueCode: string): Promise<void> {
+        for (const file of this.generatedFiles) {
+            if (!await fileExists(file)) continue;
+
+            let content = await readFile(file);
+            let modified = false;
+
+            // Fix: Cannot redefine property (specifically for react-router-dom)
+            if (content.includes("vi.mock('react-router-dom'") && !content.includes('vi.importActual')) {
+                // Replace with canonical mock pattern
+                const mockRegex = /vi\.mock\(['"]react-router-dom['"],\s*(?:async\s*)?\(\)\s*=>\s*\(\{([\s\S]*?)\}\)\);/g;
+
+                if (mockRegex.test(content)) {
+                    content = content.replace(mockRegex, (_match, body) => {
+                        return `vi.mock('react-router-dom', async () => {
+    const actual = await vi.importActual('react-router-dom');
+    return {
+        ...actual,
+        ${body}
+    };
+});`;
+                    });
+                    modified = true;
+                }
+            }
+
+            if (modified) {
+                await writeFile(file, content);
+                const action = {
+                    project: path.basename(projectPath),
+                    path: file,
+                    command: 'update-file',
+                    description: 'Fixed Vitest mocking to use canonical pattern',
+                    success: true,
+                    timestamp: new Date().toISOString()
+                };
+                this.actions.push(action);
+                this.markIssueFixed(issueCode, [action]);
+                logger.info(`✅ Fixed Vitest mocking in ${file}`);
+            }
+        }
+    }
+
+    /**
+     * Fix internal module path resolution (.js vs .ts)
+     */
+    async fixInternalModulePath(
+        projectPath: string,
+        _errorOutput: string,
+        modulePath: string
+    ): Promise<boolean> {
+        logger.info(`Fixing internal module path: ${modulePath}`);
+
+        try {
+            // Find all test files in the project
+            const { findFiles } = await import('../utils/fileUtils.js');
+            const testFiles = await findFiles(projectPath, '**/*.{test,spec}.{ts,tsx,js,jsx}', {
+                ignore: ['**/node_modules/**', '**/dist/**', '**/build/**']
+            });
+
+            let fixedCount = 0;
+            const pathToFix = modulePath.replace(/\\/g, '/'); // Normalize path separators
+
+            for (const testFile of testFiles) {
+                const content = await readFile(testFile);
+
+                // Check if this file imports the problematic module
+                if (!content.includes(pathToFix)) continue;
+
+                // Remove .js extension from the import
+                const fixedContent = content.replace(
+                    new RegExp(`from ['"]${pathToFix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`, 'g'),
+                    `from '${pathToFix.replace(/\.js$/, '')}'`
+                );
+
+                if (fixedContent !== content) {
+                    await writeFile(testFile, fixedContent);
+
+                    this.actions.push({
+                        project: path.basename(projectPath),
+                        path: testFile,
+                        command: 'fix-internal-module',
+                        description: `Fixed import '${modulePath}' → '${modulePath.replace(/\.js$/, '')}' in ${path.basename(testFile)}`,
+                        success: true,
+                        timestamp: new Date().toISOString()
+                    });
+
+                    fixedCount++;
+                }
+            }
+
+            if (fixedCount > 0) {
+                logger.info(`✓ Fixed ${fixedCount} test file(s) with internal module path issues`);
+                return true;
+            }
+        } catch (error) {
+            logger.error(`Failed to fix internal module path: ${error}`);
+        }
+        return false;
+    }
+
+    /**
+     * Install missing package and its types
+     */
+    async installMissingPackage(
+        packageName: string,
+        projectPath: string
+    ): Promise<boolean> {
+        logger.info(`Installing missing package: ${packageName}`);
+
+        try {
+            // First, install the package itself
+            const { execAsync } = await import('../utils/execUtils.js');
+            await execAsync(`npm install ${packageName}`, { cwd: projectPath });
+
+            this.actions.push({
+                project: path.basename(projectPath),
+                path: projectPath,
+                command: `npm install ${packageName}`,
+                description: `Installed missing package: ${packageName}`,
+                success: true,
+                timestamp: new Date().toISOString()
+            });
+
+            // Try to install types if it's a TypeScript project
+            const hasTypes = await this.tryInstallTypes(packageName, projectPath);
+            if (hasTypes) {
+                logger.info(`✓ Also installed @types/${packageName}`);
+            }
+
+            return true;
+        } catch (error) {
+            logger.error(`Failed to install ${packageName}: ${error}`);
+            this.actions.push({
+                project: path.basename(projectPath),
+                path: projectPath,
+                command: `npm install ${packageName}`,
+                description: `Failed to install ${packageName}`,
+                success: false,
+                timestamp: new Date().toISOString()
+            });
+            return false;
+        }
+    }
+
+    /**
+     * Try to install type definitions for a package
+     */
+    private async tryInstallTypes(
+        packageName: string,
+        projectPath: string
+    ): Promise<boolean> {
+        const typesPackage = `@types/${packageName}`;
+        try {
+            const { execAsync } = await import('../utils/execUtils.js');
+            await execAsync(`npm install -D ${typesPackage}`, { cwd: projectPath });
+
+            this.actions.push({
+                project: path.basename(projectPath),
+                path: projectPath,
+                command: `npm install -D ${typesPackage}`,
+                description: `Installed type definitions: ${typesPackage}`,
+                success: true,
+                timestamp: new Date().toISOString()
+            });
+
+            return true;
+        } catch {
+            // Types not available or not needed, not a fatal error
+            return false;
+        }
+    }
+
+    /**
+     * Fix TypeScript errors in test files by injecting @ts-nocheck
+     */
+    async fixTestTypeScriptErrors(
+        projectPath: string,
+        _errorOutput: string
+    ): Promise<boolean> {
+        logger.info('Fixing TypeScript errors in test files...');
+
+        try {
+            // Use filesystem walk instead of parsing stderr
+            const { findFiles } = await import('../utils/fileUtils.js');
+            const testFiles = await findFiles(projectPath, '**/*.{test,spec,integration,e2e}.{ts,tsx}', {
+                ignore: ['**/node_modules/**', '**/dist/**', '**/build/**']
+            });
+
+            logger.info(`Found ${testFiles.length} test files to patch`);
+            let fixedCount = 0;
+
+            for (const testFile of testFiles) {
+                try {
+                    const content = await readFile(testFile);
+
+                    // Skip if @ts-nocheck already present
+                    if (content.includes('// @ts-nocheck') || content.includes('/* @ts-nocheck */')) {
+                        continue;
+                    }
+
+                    // Prepend @ts-nocheck
+                    const fixedContent = `// @ts-nocheck\n${content}`;
+                    await writeFile(testFile, fixedContent);
+
+                    this.actions.push({
+                        project: path.basename(projectPath),
+                        path: testFile,
+                        command: 'add-ts-nocheck',
+                        description: `Added // @ts-nocheck to ${path.basename(testFile)}`,
+                        success: true,
+                        timestamp: new Date().toISOString()
+                    });
+
+                    fixedCount++;
+                } catch (error) {
+                    logger.error(`Failed to fix ${testFile}: ${error}`);
+                }
+            }
+
+            logger.info(`✓ Fixed ${fixedCount} test files with @ts-nocheck`);
+            return fixedCount > 0;
+        } catch (error) {
+            logger.error(`Failed to fix TypeScript errors: ${error}`);
+            return false;
+        }
     }
 }

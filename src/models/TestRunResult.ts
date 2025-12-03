@@ -1,4 +1,5 @@
 import { EnvironmentIssue, AutoFixAction } from './EnvironmentModels.js';
+import { CoverageReport } from './CoverageModels.js';
 
 /**
  * Result of a single test suite execution
@@ -34,6 +35,20 @@ export interface TestRunResult {
     timestamp: string;
     environmentIssues: EnvironmentIssue[];
     autoFixActions: AutoFixAction[];
+    coverage?: CoverageReport;
+}
+
+/**
+ * Represents a structured issue in the job execution
+ */
+export interface JobIssue {
+    project: string;
+    stage: 'env_heal' | 'generate' | 'execute' | 'coverage' | 'refine';
+    kind: string;  // e.g. 'JEST_MISSING_PACKAGE', 'TEST_TS_ERROR', 'COVERAGE_BELOW_THRESHOLD'
+    severity: 'info' | 'warning' | 'error';
+    message: string;
+    suggestion: string;
+    details?: string;
 }
 
 /**
@@ -62,4 +77,5 @@ export interface JobResult {
         reason?: string;                    // Explanation when totalTests is 0
         overallCoverage?: number;
     };
+    issues: JobIssue[];  // Structured issues with suggestions
 }

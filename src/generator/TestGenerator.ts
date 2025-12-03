@@ -3,6 +3,7 @@ import { ArchitectureModel } from '../models/ArchitectureModel.js';
 import { UnitTestGenerator } from './UnitTestGenerator.js';
 import { IntegrationTestGenerator } from './IntegrationTestGenerator.js';
 import { E2ETestGenerator } from './E2ETestGenerator.js';
+import { CSharpTestGenerator } from './CSharpTestGenerator.js';
 import { BotConfig } from '../config/schema.js';
 import logger from '../utils/logger.js';
 
@@ -13,6 +14,7 @@ export class TestGenerator {
     private unitTestGenerator: UnitTestGenerator;
     private integrationTestGenerator: IntegrationTestGenerator;
     private e2eTestGenerator: E2ETestGenerator;
+    private csharpTestGenerator: CSharpTestGenerator;
     private config: BotConfig;
 
     constructor(config: BotConfig) {
@@ -20,6 +22,7 @@ export class TestGenerator {
         this.unitTestGenerator = new UnitTestGenerator(config);
         this.integrationTestGenerator = new IntegrationTestGenerator(config);
         this.e2eTestGenerator = new E2ETestGenerator(config);
+        this.csharpTestGenerator = new CSharpTestGenerator(config);
     }
 
     /**
@@ -42,7 +45,12 @@ export class TestGenerator {
         // Generate unit tests
         if (this.config.enabled_tests.unit) {
             try {
-                results.unit = await this.unitTestGenerator.generateTests(project, projectPath, architecture);
+                // Use C# specific generator for C# projects
+                if (project.language === 'csharp' || project.language === 'c#') {
+                    results.unit = await this.csharpTestGenerator.generateTests(project, projectPath, architecture);
+                } else {
+                    results.unit = await this.unitTestGenerator.generateTests(project, projectPath, architecture);
+                }
                 logger.info(`Generated ${results.unit.length} unit test files`);
             } catch (error) {
                 const errorMsg = `Failed to generate unit tests for ${project.name}: ${error}`;
@@ -79,5 +87,19 @@ export class TestGenerator {
         logger.info(`Generated total ${totalTests} test files for ${project.name}`);
 
         return results;
+    }
+    /**
+     * Generate targeted tests for specific files
+     */
+    async generateTargetedTests(
+        project: ProjectDescriptor,
+        projectPath: string,
+        filesToCover: { path: string; instructions: string }[]
+    ): Promise<string[]> {
+        // Use C# specific generator for C# projects
+        if (project.language === 'csharp' || project.language === 'c#') {
+            return await this.csharpTestGenerator.generateTestsForFiles(project, projectPath, filesToCover);
+        }
+        return await this.unitTestGenerator.generateTestsForFiles(project, projectPath, filesToCover);
     }
 }

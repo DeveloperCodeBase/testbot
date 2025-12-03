@@ -3,14 +3,15 @@ import { ArchitectureModel } from '../models/ArchitectureModel.js';
 import { LLMOrchestrator, LLMRequest } from '../llm/LLMOrchestrator.js';
 import { AdapterRegistry } from '../adapters/AdapterRegistry.js';
 import { BotConfig } from '../config/schema.js';
-import { writeFile, readFile, findSourceFiles as findSourceFilesUtil } from '../utils/fileUtils.js';
+import { writeFile, readFile, findFiles } from '../utils/fileUtils.js';
 import logger from '../utils/logger.js';
 import path from 'path';
 
 /**
- * Generates unit tests for source files
+ * Generates unit tests for C# (.NET) projects
+ *  Supports xUnit, NUnit, and MSTest frameworks
  */
-export class UnitTestGenerator {
+export class CSharpTestGenerator {
     private llmOrchestrator: LLMOrchestrator;
     private adapterRegistry: AdapterRegistry;
 
@@ -20,27 +21,27 @@ export class UnitTestGenerator {
     }
 
     /**
-     * Generate unit tests for a project
+     * Generate unit tests for a C# project
      */
     async generateTests(
         project: ProjectDescriptor,
         projectPath: string,
         architecture?: ArchitectureModel
     ): Promise<string[]> {
-        logger.info(`Generating unit tests for project: ${project.name}`);
+        logger.info(`Generating C# unit tests for project: ${project.name}`);
 
         const adapter = this.adapterRegistry.getAdapter(project);
         if (!adapter) {
-            logger.warn(`No adapter for project ${project.name}, skipping unit tests`);
+            logger.warn(`No adapter for project ${project.name}, skipping C# tests`);
             return [];
         }
 
         const generatedFiles: string[] = [];
 
-        // Find source files that need tests
+        // Find C# source files
         const sourceFiles = await this.findSourceFiles(projectPath, project);
 
-        // Generate tests in batches to manage token limits
+        // Generate tests in batches
         const batchSize = 3;
         for (let i = 0; i < sourceFiles.length; i += batchSize) {
             const batch = sourceFiles.slice(i, i + batchSize);
@@ -53,13 +54,14 @@ export class UnitTestGenerator {
                     }))
                 );
 
+                const testFramework = adapter.getTestFramework(project);
                 const request: LLMRequest = {
                     role: 'unit',
-                    language: project.language,
+                    language: 'csharp',
                     framework: project.framework,
-                    testFramework: adapter.getTestFramework(project),
+                    testFramework,
                     files,
-                    projectSummary: this.createProjectSummary(project),
+                    projectSummary: this.createProjectSummary(project, testFramework),
                     architectureSummary: architecture ? this.createArchitectureSummary(architecture) : undefined,
                 };
 
@@ -73,17 +75,17 @@ export class UnitTestGenerator {
                         const relativeTestPath = adapter.getTestFilePath(batch[0], 'unit', project);
                         testPath = path.join(projectPath, relativeTestPath);
                     } else {
-                        // Normalize filename: strip project name prefix if present
+                        // Normalize filename
                         const normalizedFilename = this.normalizeFilename(filename, project.name);
                         testPath = path.join(projectPath, normalizedFilename);
                     }
 
                     await writeFile(testPath, content);
                     generatedFiles.push(testPath);
-                    logger.info(`Generated unit test: ${testPath}`);
+                    logger.info(`Generated C# unit test: ${testPath}`);
                 }
             } catch (error) {
-                logger.error(`Failed to generate unit tests for batch: ${error}`);
+                logger.error(`Failed to generate C# unit tests for batch: ${error}`);
             }
         }
 
@@ -91,14 +93,14 @@ export class UnitTestGenerator {
     }
 
     /**
-     * Generate unit tests for specific files with instructions
+     * Generate unit tests for specific files with instructions (for refinement)
      */
     async generateTestsForFiles(
         project: ProjectDescriptor,
         projectPath: string,
         filesToCover: { path: string; instructions: string }[]
     ): Promise<string[]> {
-        logger.info(`Generating targeted unit tests for ${filesToCover.length} files in ${project.name}`);
+        logger.info(`Generating targeted C# unit tests for ${filesToCover.length} files in ${project.name}`);
 
         const adapter = this.adapterRegistry.getAdapter(project);
         if (!adapter) return [];
@@ -120,13 +122,14 @@ export class UnitTestGenerator {
                 // Combine instructions
                 const instructions = batch.map(item => `File ${item.path}: ${item.instructions}`).join('\n');
 
+                const testFramework = adapter.getTestFramework(project);
                 const request: LLMRequest = {
                     role: 'unit',
-                    language: project.language,
+                    language: 'csharp',
                     framework: project.framework,
-                    testFramework: adapter.getTestFramework(project),
+                    testFramework,
                     files,
-                    projectSummary: this.createProjectSummary(project),
+                    projectSummary: this.createProjectSummary(project, testFramework),
                     additionalInstructions: `Focus on covering these specific areas:\n${instructions}`
                 };
 
@@ -144,10 +147,10 @@ export class UnitTestGenerator {
 
                     await writeFile(testPath, content);
                     generatedFiles.push(testPath);
-                    logger.info(`Generated targeted unit test: ${testPath}`);
+                    logger.info(`Generated targeted C# unit test: ${testPath}`);
                 }
             } catch (error) {
-                logger.error(`Failed to generate targeted tests: ${error}`);
+                logger.error(`Failed to generate targeted C# tests: ${error}`);
             }
         }
 
@@ -155,24 +158,21 @@ export class UnitTestGenerator {
     }
 
     /**
-     * Find source files that need tests
+     * Find C# source files
      */
     private async findSourceFiles(projectPath: string, project: ProjectDescriptor): Promise<string[]> {
-        logger.info(`Finding source files in ${projectPath} for language: ${project.language}`);
+        logger.info(`Finding C# source files in ${projectPath} for project: ${project.name}`);
 
-        // Use glob-based discovery
-        const sourceFiles = await findSourceFilesUtil(projectPath, project.language, []);
+        // Look for .cs files, excluding test files, bin, obj
+        const csFiles = await findFiles(projectPath, '**/*.cs', {
+            ignore: ['**/bin/**', '**/obj/**', '**/*Tests.cs', '**/*Test.cs', '**/tests/**', '**/Tests/**'],
+        });
 
-        logger.info(`Found ${sourceFiles.length} source files`);
+        logger.info(`Found ${csFiles.length} C# source files for ${project.name}`);
 
-        // Convert to relative paths and limit to reasonable batch size
-        const relativeFiles = sourceFiles
+        // Convert to relative paths and limit
+        const relativeFiles = csFiles
             .map(f => path.relative(projectPath, f))
-            .filter(f => {
-                // Additional filtering: skip entry-point-like files if they're too large
-                // Focus on actual implementation files
-                return !f.includes('node_modules') && !f.includes('dist');
-            })
             .slice(0, 10); // Limit to 10 files for demo
 
         logger.info(`Selected ${relativeFiles.length} files for test generation`);
@@ -182,11 +182,20 @@ export class UnitTestGenerator {
     /**
      * Create project summary
      */
-    private createProjectSummary(project: ProjectDescriptor): string {
+    private createProjectSummary(project: ProjectDescriptor, testFramework: string): string {
         return `Project: ${project.name}
-Language: ${project.language}
+Language: C# (.NET)
 Framework: ${project.framework || 'None'}
-Build Tool: ${project.buildTool || 'None'}`;
+Test Framework: ${testFramework}
+
+C# Test Generation Guidelines:
+- Follow ${testFramework} conventions and attributes ([Fact], [Test], etc.)
+- Use proper C# naming conventions (PascalCase for classes and methods)
+- Place test classes in a namespace matching the source namespace + ".Tests"
+- For services with dependency injection, use Moq for mocking dependencies
+- For controllers, mock ILogger, services, and HttpContext as needed
+- Include proper using statements
+- Add descriptive test method names (e.g., Method_Scenario_ExpectedBehavior)`;
     }
 
     /**
@@ -198,13 +207,11 @@ Build Tool: ${project.buildTool || 'None'}`;
     }
 
     /**
-     * Normalize filename to prevent double project name nesting
-     * Strips project name prefix if present (e.g., 'backend-node/file.test.ts' => 'file.test.ts')
+     * Normalize filename
      */
-    private normalizeFilename(filename: string, projectName: string): string {
-        // Remove any leading project name directory
+    private normalizeFilename(filename: string, _projectName: string): string {
         const segments = filename.split(path.sep);
-        if (segments.length > 1 && segments[0] === projectName) {
+        if (segments.length > 1 && segments[0] === _projectName) {
             return segments.slice(1).join(path.sep);
         }
         return filename;

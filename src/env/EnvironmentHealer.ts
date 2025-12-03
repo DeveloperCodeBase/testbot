@@ -93,7 +93,7 @@ export abstract class EnvironmentHealer {
     /**
      * Add an environment issue
      */
-    protected addIssue(
+    public addIssue(
         project: string,
         stage: IssueStage,
         severity: IssueSeverity,

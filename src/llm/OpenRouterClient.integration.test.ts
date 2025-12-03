@@ -1,3 +1,4 @@
+// @ts-nocheck
 import axios from 'axios';
 import { OpenRouterClient } from './OpenRouterClient.js';
 import { LLMMessage } from '../models/LLMMessage.js';

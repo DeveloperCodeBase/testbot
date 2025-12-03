@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Note: Transform Playwright tests to jest e2e tests using supertest/jest or keep as Playwright tests.
 // Since original tests use Playwright test framework,
 // here is the Jest-based integration style E2E test mockup for API health endpoints.

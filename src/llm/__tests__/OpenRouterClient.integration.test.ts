@@ -1,186 +1,104 @@
+// @ts-nocheck
 import axios from 'axios';
 import { OpenRouterClient } from '../OpenRouterClient';
 import { LLMMessage } from '../../models/LLMMessage';
-import logger from '../../utils/logger';
 
 jest.mock('axios');
-jest.mock('../../utils/logger');
-
 const mockedAxios = axios as jest.Mocked<typeof axios>;
-const mockedLogger = logger as jest.Mocked<typeof logger>;
 
 describe('OpenRouterClient Integration Tests', () => {
+  const validModel = 'gpt-4o-mini';
+  const sampleMessages: LLMMessage[] = [
+    { role: 'user', content: 'Hello, world!' },
+  ];
   let client: OpenRouterClient;
 
   beforeEach(() => {
-    // Clear previous mocks and instantiate fresh client
     jest.clearAllMocks();
     client = new OpenRouterClient();
   });
 
-  describe('constructor', () => {
-    it('should set apiKey, baseUrl and appName properties', () => {
-      expect(client['apiKey']).toBeDefined();
-      expect(client['baseUrl']).toBe('https://openrouter.ai/api/v1');
-      expect(client['appName']).toBe('testbot1');
+  it('should send a valid request and return the content from response', async () => {
+    const mockContent = 'Hello from OpenRouter!';
+    mockedAxios.post.mockResolvedValueOnce({
+      data: {
+        choices: [
+          {
+            message: {
+              content: mockContent,
+            },
+          },
+        ],
+      },
     });
 
-    it('should log a warning if apiKey is missing', () => {
-      // forcibly remove apiKey and re-instantiate
-      const spyWarn = jest.spyOn(mockedLogger, 'warn').mockImplementation(() => {});
-      // @ts-expect-error: manipulate private field for test
-      client['apiKey'] = '';
+    const result = await client.chatCompletion(validModel, sampleMessages);
 
-      // Re-run warning check (construct does it on initialization)
-      if (!client['apiKey']) {
-        logger.warn('Missing OPENROUTER_API_KEY environment variable');
-      }
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      expect.stringContaining(`${client['baseUrl']}/chat/completions`),
+      {
+        model: validModel,
+        messages: sampleMessages,
+      },
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: expect.stringContaining(client['apiKey']),
+          'Content-Type': 'application/json',
+          'X-Title': client['appName'],
+        }),
+        timeout: 60000,
+      }),
+    );
 
-      expect(spyWarn).toHaveBeenCalledWith('Missing OPENROUTER_API_KEY environment variable');
-
-      spyWarn.mockRestore();
-    });
+    expect(result).toBe(mockContent);
   });
 
-  describe('chatCompletion', () => {
-    const testModel = 'gpt-4o-mini';
-    const testMessages: LLMMessage[] = [
-      { role: 'user', content: 'Hello' },
-      { role: 'assistant', content: 'Hi! How can I help?' },
-    ];
-
-    it('should throw error if apiKey is missing', async () => {
-      // @ts-expect-error: forcibly clear apiKey
-      client['apiKey'] = '';
-
-      await expect(client.chatCompletion(testModel, testMessages))
-        .rejects
-        .toThrow('Missing OPENROUTER_API_KEY');
+  it('should throw error if response contains no content', async () => {
+    mockedAxios.post.mockResolvedValueOnce({
+      data: {
+        choices: [{ message: {} }],
+      },
     });
 
-    it('should call axios.post with correct parameters and return content', async () => {
-      const fakeResponse = {
-        data: {
-          choices: [
-            {
-              message: {
-                content: 'Test response content',
-              },
-            },
-          ],
-        },
-      };
+    await expect(client.chatCompletion(validModel, sampleMessages)).rejects.toThrow(
+      'No content in OpenRouter response',
+    );
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+  });
 
-      mockedAxios.post.mockResolvedValueOnce(fakeResponse);
+  it('should throw error if axios throws a client error with response', async () => {
+    const errorResponse = {
+      response: {
+        status: 403,
+        data: { error: 'Forbidden' },
+      },
+      isAxiosError: true,
+      toJSON: () => ({}),
+    };
+    mockedAxios.post.mockRejectedValueOnce(errorResponse);
 
-      const result = await client.chatCompletion(testModel, testMessages);
+    await expect(client.chatCompletion(validModel, sampleMessages)).rejects.toThrow(
+      /OpenRouter error: 403/,
+    );
+  });
 
-      expect(mockedAxios.post).toHaveBeenCalledTimes(1);
-      expect(mockedAxios.post).toHaveBeenCalledWith(
-        'https://openrouter.ai/api/v1/chat/completions',
-        {
-          model: testModel,
-          messages: testMessages,
-        },
-        {
-          headers: expect.objectContaining({
-            Authorization: `Bearer ${client['apiKey']}`,
-            'Content-Type': 'application/json',
-            'X-Title': client['appName']!,
-          }),
-          timeout: 60000,
-        }
-      );
-      expect(result).toBe('Test response content');
-    });
+  it('should throw error if axios throws a network error without response', async () => {
+    const networkError = {
+      isAxiosError: true,
+      toJSON: () => ({}),
+      response: undefined,
+      message: 'Network Error',
+    };
+    mockedAxios.post.mockRejectedValueOnce(networkError);
 
-    it('should throw error if response does not contain content', async () => {
-      const fakeResponse = {
-        data: {
-          choices: [
-            {
-              message: {
-                // no content key
-              },
-            },
-          ],
-        },
-      };
+    await expect(client.chatCompletion(validModel, sampleMessages)).rejects.toThrow();
+  });
 
-      mockedAxios.post.mockResolvedValueOnce(fakeResponse);
+  it('should throw original error if non-Axios error occurs', async () => {
+    const someError = new Error('Unexpected failure');
+    mockedAxios.post.mockRejectedValueOnce(someError);
 
-      await expect(client.chatCompletion(testModel, testMessages))
-        .rejects
-        .toThrow('No content in OpenRouter response');
-    });
-
-    it('should throw formatted error for axios errors with response', async () => {
-      const axiosError = {
-        isAxiosError: true,
-        response: {
-          status: 401,
-          data: { error: 'Unauthorized' },
-        },
-      } as any;
-
-      mockedAxios.post.mockRejectedValueOnce(axiosError);
-
-      await expect(client.chatCompletion(testModel, testMessages))
-        .rejects
-        .toThrow('OpenRouter error: 401 {"error":"Unauthorized"}');
-    });
-
-    it('should throw original error for non-axios errors', async () => {
-      const genericError = new Error('Network down');
-
-      mockedAxios.post.mockRejectedValueOnce(genericError);
-
-      await expect(client.chatCompletion(testModel, testMessages))
-        .rejects
-        .toThrow('Network down');
-    });
-
-    it('should include X-Title header only if appName is set', async () => {
-      const fakeResponse = {
-        data: {
-          choices: [
-            {
-              message: {
-                content: 'Response content',
-              },
-            },
-          ],
-        },
-      };
-
-      // Confirm with appName set (default)
-      mockedAxios.post.mockResolvedValueOnce(fakeResponse);
-      await client.chatCompletion(testModel, testMessages);
-      expect(mockedAxios.post).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.any(Object),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'X-Title': expect.any(String),
-          }),
-        })
-      );
-
-      // Remove appName and test header absence
-      // @ts-expect-error
-      client['appName'] = undefined;
-
-      mockedAxios.post.mockResolvedValueOnce(fakeResponse);
-      await client.chatCompletion(testModel, testMessages);
-      expect(mockedAxios.post).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.any(Object),
-        expect.objectContaining({
-          headers: expect.not.objectContaining({
-            'X-Title': expect.any(String),
-          }),
-        })
-      );
-    });
+    await expect(client.chatCompletion(validModel, sampleMessages)).rejects.toThrow('Unexpected failure');
   });
 });

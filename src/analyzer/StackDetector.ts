@@ -346,7 +346,6 @@ export class StackDetector {
             if (await fileExists(mainFile)) {
                 entryPoints.push(mainFile);
             }
-
             // Check for cmd directory (common pattern)
             const cmdFiles = await findFiles(projectPath, 'cmd/**/main.go', {});
             entryPoints.push(...cmdFiles);
@@ -364,6 +363,7 @@ export class StackDetector {
 
         // If no go.mod found but .go files exist, treat as Go project
         if (projects.length === 0) {
+            const { findFiles } = await import('../utils/fileUtils.js');
             const goFiles = await findFiles(this.repoPath, '**/*.go', {
                 ignore: ['**/vendor/**'],
             });

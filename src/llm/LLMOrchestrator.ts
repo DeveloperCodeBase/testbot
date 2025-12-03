@@ -5,6 +5,7 @@ import { OpenRouterClient } from './OpenRouterClient.js';
 
 export interface LLMRequest {
     role: 'unit' | 'integration' | 'e2e' | 'fix';
+    additionalInstructions?: string;
     language: string;
     framework?: string;
     testFramework: string;
@@ -35,7 +36,7 @@ export class LLMOrchestrator {
      * Generate tests using LLM
      */
     async generateTests(request: LLMRequest): Promise<LLMResponse> {
-        const prompt = this.buildPrompt(request);
+        const prompt = this.buildPrompt(request, request.additionalInstructions);
 
         logger.info(`Generating ${request.role} tests for ${request.language} project`);
 
@@ -76,7 +77,7 @@ export class LLMOrchestrator {
     /**
      * Build prompt for test generation
      */
-    private buildPrompt(request: LLMRequest): string {
+    private buildPrompt(request: LLMRequest, additionalInstructions?: string): string {
         const { role, language, framework, testFramework, files, projectSummary, architectureSummary, extraContext } = request;
 
         let prompt = `You are an expert test engineer generating ${role} tests for a ${language} project.
@@ -110,6 +111,26 @@ Requirements:
 - Cover edge cases and error scenarios
 - Use appropriate mocking strategies
 - Follow ${language} conventions
+
+${(framework === 'react' && testFramework === 'vitest') ? `
+CRITICAL MOCKING STANDARDS:
+- Use 'vi.mock' for external modules.
+- For 'react-router-dom', use this canonical pattern to avoid "Cannot redefine property" errors:
+  \`\`\`typescript
+  vi.mock('react-router-dom', async () => {
+    const actual = await vi.importActual('react-router-dom');
+    return {
+      ...actual,
+      useNavigate: () => vi.fn(),
+      useLocation: () => ({ pathname: '/' }),
+      useParams: () => ({}),
+    };
+  });
+  \`\`\`
+- Always use 'vi.importActual' when mocking partial modules.
+` : ''}
+
+${additionalInstructions ? `\nADDITIONAL INSTRUCTIONS:\n${additionalInstructions}\n` : ''}
 
 Return ONLY the test code in a single code block with the filename as a comment at the top.
 Format:
