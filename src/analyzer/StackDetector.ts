@@ -1,7 +1,7 @@
 import path from 'path';
-import { fileExists, findFiles, readFile } from '../utils/fileUtils.js';
-import { ProjectDescriptor, RepoAnalysis } from '../models/ProjectDescriptor.js';
-import logger from '../utils/logger.js';
+import { fileExists, findFiles, readFile } from '../utils/fileUtils';
+import { ProjectDescriptor, RepoAnalysis } from '../models/ProjectDescriptor';
+import logger from '../utils/logger';
 
 /**
  * Detects languages, frameworks, and project structure
@@ -143,6 +143,26 @@ export class StackDetector {
 
         for (const projectPath of projectDirs) {
             const relativePath = path.relative(this.repoPath, projectPath);
+
+            // Count actual Python source files (excluding tests, venvs, tooling)
+            const sourceFiles = await findFiles(projectPath, '**/*.py', {
+                ignore: [
+                    '**/venv/**', '**/.venv/**', '**/env/**',
+                    '**/tests/**', '**/test/**',    // Exclude test directories
+                    '**/__pycache__/**',
+                    '**/migrations/**',              // Django migrations
+                    '**/site-packages/**',           // Installed packages
+                    '**/node_modules/**'             // In case of mixed projects
+                ]
+            });
+
+            // Only create project if there are actual source files
+            if (sourceFiles.length === 0) {
+                logger.info(`Skipping Python project at ${projectPath}: no app source files found (only config/test files)`);
+                continue;
+            }
+
+            logger.info(`Found ${sourceFiles.length} Python source file(s) in ${projectPath}`);
             const framework = await this.detectPythonFramework(projectPath);
 
             // Find entry points
@@ -363,7 +383,7 @@ export class StackDetector {
 
         // If no go.mod found but .go files exist, treat as Go project
         if (projects.length === 0) {
-            const { findFiles } = await import('../utils/fileUtils.js');
+            const { findFiles } = await import('../utils/fileUtils');
             const goFiles = await findFiles(this.repoPath, '**/*.go', {
                 ignore: ['**/vendor/**'],
             });

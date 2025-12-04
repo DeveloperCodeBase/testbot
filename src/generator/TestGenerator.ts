@@ -1,11 +1,11 @@
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { ArchitectureModel } from '../models/ArchitectureModel.js';
-import { UnitTestGenerator } from './UnitTestGenerator.js';
-import { IntegrationTestGenerator } from './IntegrationTestGenerator.js';
-import { E2ETestGenerator } from './E2ETestGenerator.js';
-import { CSharpTestGenerator } from './CSharpTestGenerator.js';
-import { BotConfig } from '../config/schema.js';
-import logger from '../utils/logger.js';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { ArchitectureModel } from '../models/ArchitectureModel';
+import { UnitTestGenerator } from './UnitTestGenerator';
+import { IntegrationTestGenerator } from './IntegrationTestGenerator';
+import { E2ETestGenerator } from './E2ETestGenerator';
+import { CSharpTestGenerator } from './CSharpTestGenerator';
+import { BotConfig } from '../config/schema';
+import logger from '../utils/logger';
 
 /**
  * Coordinates all test generation
@@ -101,5 +101,24 @@ export class TestGenerator {
             return await this.csharpTestGenerator.generateTestsForFiles(project, projectPath, filesToCover);
         }
         return await this.unitTestGenerator.generateTestsForFiles(project, projectPath, filesToCover);
+    }
+
+    /**
+     * Get aggregated LLM usage statistics from all generators
+     */
+    getLLMUsageStats() {
+        const allStats = [
+            ...this.unitTestGenerator['llmOrchestrator'].getUsageStats(),
+            ...this.integrationTestGenerator['llmOrchestrator'].getUsageStats(),
+            ...this.e2eTestGenerator['llmOrchestrator'].getUsageStats(),
+            ...this.csharpTestGenerator['llmOrchestrator'].getUsageStats(),
+        ];
+
+        const totalTokens = allStats.reduce((sum, stat) => sum + stat.tokensEstimated, 0);
+
+        return {
+            stats: allStats,
+            totalTokens
+        };
     }
 }

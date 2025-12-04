@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { LLMMessage } from '../models/LLMMessage.js';
-import logger from '../utils/logger.js';
+import { LLMMessage } from '../models/LLMMessage';
+import logger from '../utils/logger';
 
 export class OpenRouterClient {
     private apiKey: string;
@@ -8,7 +8,7 @@ export class OpenRouterClient {
     private appName?: string;
 
     constructor() {
-        this.apiKey = '';
+        this.apiKey = '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';
         this.baseUrl = 'https://openrouter.ai/api/v1';
         this.appName = 'testbot1';
 

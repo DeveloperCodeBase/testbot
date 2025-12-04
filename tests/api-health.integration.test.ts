@@ -1,162 +1,103 @@
 // @ts-nocheck
-import fetch from 'node-fetch';
-import { Response } from 'node-fetch';
+import request from 'supertest';
+import express from 'express';
+import { Server } from 'http';
 
-jest.mock('node-fetch', () => jest.fn());
+// Assuming the app is exported from somewhere, here we mock minimal API endpoints
+// Since no original server code provided, we'll create a minimal express app for demo
+// In real project, import the actual express app like:
+// import app from '../src/app';
 
-const mockedFetch = fetch as jest.MockedFunction<typeof fetch>;
+const mockDb = {
+  isConnected: true,
+  async ping() {
+    if (!this.isConnected) throw new Error('Database disconnected');
+    return true;
+  },
+};
+
+const mockService = {
+  async healthCheck() {
+    return { status: 'ok', uptime: 12345 };
+  },
+};
+
+function getApp() {
+  const app = express();
+  app.get('/api/health', async (req, res) => {
+    try {
+      const serviceHealth = await mockService.healthCheck();
+      await mockDb.ping();
+      res.status(200).json({
+        service: serviceHealth.status,
+        uptime: serviceHealth.uptime,
+        database: 'connected',
+      });
+    } catch (err) {
+      res.status(503).json({ error: 'Service or database unavailable' });
+    }
+  });
+  return app;
+}
 
 describe('API Health Integration Tests', () => {
-  const baseURL = process.env.BASE_URL || 'http://localhost:3000';
+  let app: express.Express;
+  let server: Server;
 
-  afterEach(() => {
-    jest.clearAllMocks();
+  beforeAll((done) => {
+    app = getApp();
+    server = app.listen(0, done);
   });
 
-  describe('GET /health', () => {
-    it('should return status 200 and valid health status', async () => {
-      const mockBody = { status: 'OK' };
-      mockedFetch.mockResolvedValue(new Response(JSON.stringify(mockBody), { status: 200 }));
-
-      const response = await fetch(`${baseURL}/health`);
-      expect(response.ok).toBe(true);
-      const data = await response.json();
-      expect(data).toHaveProperty('status');
-      expect(typeof data.status).toBe('string');
-      expect(['up', 'healthy', 'ok', 'alive']).toContain(data.status.toLowerCase());
-      expect(mockedFetch).toHaveBeenCalledWith(`${baseURL}/health`);
-    });
-
-    it('should handle missing status field gracefully', async () => {
-      const mockBody = { message: 'Service running' };
-      mockedFetch.mockResolvedValue(new Response(JSON.stringify(mockBody), { status: 200 }));
-
-      const response = await fetch(`${baseURL}/health`);
-      expect(response.ok).toBe(true);
-      const data = await response.json();
-      expect(data).not.toHaveProperty('status');
-      // The test might fail or pass based on implementation, here we just check for property absence
-    });
-
-    it('should handle non-200 status codes', async () => {
-      mockedFetch.mockResolvedValue(new Response('Service Unavailable', { status: 503 }));
-
-      const response = await fetch(`${baseURL}/health`);
-      expect(response.ok).toBe(false);
-      expect(response.status).toBe(503);
-    });
+  afterAll((done) => {
+    server.close(done);
   });
 
-  describe('GET /api', () => {
-    it('should return a JSON object with endpoints array including /health', async () => {
-      const mockBody = { endpoints: ['/health', '/api', '/users'] };
-      mockedFetch.mockResolvedValue(new Response(JSON.stringify(mockBody), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }));
+  describe('GET /api/health', () => {
+    it('should return 200 and health status when all systems are operational', async () => {
+      jest.spyOn(mockDb, 'ping').mockResolvedValueOnce(true);
+      jest.spyOn(mockService, 'healthCheck').mockResolvedValueOnce({ status: 'ok', uptime: 9999 });
 
-      const response = await fetch(`${baseURL}/api`);
-      expect(response.ok).toBe(true);
-      const contentType = response.headers.get('content-type') ?? '';
-      expect(contentType).toMatch(/application\/json/);
-      const data = await response.json();
-      expect(data).toBeInstanceOf(Object);
-      expect(data).toHaveProperty('endpoints');
-      expect(Array.isArray(data.endpoints)).toBe(true);
-      expect(data.endpoints).toContain('/health');
+      const res = await request(app).get('/api/health');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        service: 'ok',
+        uptime: 9999,
+        database: 'connected',
+      });
     });
 
-    it('should handle non-JSON response gracefully', async () => {
-      mockedFetch.mockResolvedValue(new Response('<html>API info</html>', {
-        status: 200,
-        headers: { 'content-type': 'text/html' },
-      }));
+    it('should return 503 if database ping fails', async () => {
+      jest.spyOn(mockDb, 'ping').mockRejectedValueOnce(new Error('DB down'));
+      jest.spyOn(mockService, 'healthCheck').mockResolvedValueOnce({ status: 'ok', uptime: 123 });
 
-      const response = await fetch(`${baseURL}/api`);
-      expect(response.ok).toBe(true);
-      const contentType = response.headers.get('content-type') ?? '';
-      expect(contentType).not.toMatch(/application\/json/);
+      const res = await request(app).get('/api/health');
 
-      // Attempt to parse JSON should fail
-      await expect(response.json()).rejects.toThrow();
-    });
-  });
-
-  describe('GET unknown endpoint returns 404', () => {
-    it('should return 404 and optional error message JSON', async () => {
-      const mockBody = { error: 'Not Found' };
-      mockedFetch.mockResolvedValue(new Response(JSON.stringify(mockBody), { status: 404, headers: { 'content-type': 'application/json' } }));
-
-      const response = await fetch(`${baseURL}/api/unknown-nonexistent-endpoint`);
-      expect(response.status).toBe(404);
-
-      const data = await response.json();
-      expect(data).toHaveProperty('error');
-      expect(typeof data.error).toBe('string');
+      expect(res.status).toBe(503);
+      expect(res.body).toHaveProperty('error', 'Service or database unavailable');
     });
 
-    it('should handle non-JSON 404 response gracefully', async () => {
-      mockedFetch.mockResolvedValue(new Response('Not Found', { status: 404 }));
+    it('should return 503 if service health check fails', async () => {
+      jest.spyOn(mockService, 'healthCheck').mockRejectedValueOnce(new Error('Service down'));
+      jest.spyOn(mockDb, 'ping').mockResolvedValueOnce(true);
 
-      const response = await fetch(`${baseURL}/api/unknown-nonexistent-endpoint`);
-      expect(response.status).toBe(404);
+      const res = await request(app).get('/api/health');
 
-      await expect(response.json()).rejects.toThrow();
-    });
-  });
-
-  describe('GET /api/error simulating server error', () => {
-    it('should return 500+ status and error message if endpoint exists', async () => {
-      const mockBody = { error: 'Internal Server Error' };
-      mockedFetch.mockResolvedValue(new Response(JSON.stringify(mockBody), { status: 500, headers: { 'content-type': 'application/json' } }));
-
-      const response = await fetch(`${baseURL}/api/error`);
-      if (response.status >= 500) {
-        expect(response.status).toBeGreaterThanOrEqual(500);
-        const data = await response.json();
-        expect(data).toHaveProperty('error');
-        expect(typeof data.error).toBe('string');
-      } else {
-        // Skip scenario handled externally, but can't skip in Jest - so just assert fail if unexpected
-        throw new Error('No server error simulation endpoint available');
-      }
+      expect(res.status).toBe(503);
+      expect(res.body).toHaveProperty('error', 'Service or database unavailable');
     });
 
-    it('should skip or handle when /api/error does not exist or no error', async () => {
-      mockedFetch.mockResolvedValue(new Response('OK', { status: 200 }));
+    it('should handle unexpected errors gracefully', async () => {
+      jest.spyOn(mockService, 'healthCheck').mockImplementationOnce(() => {
+        throw new Error('Unexpected error');
+      });
+      jest.spyOn(mockDb, 'ping').mockResolvedValueOnce(true);
 
-      const response = await fetch(`${baseURL}/api/error`);
-      if (response.status < 500) {
-        // No error simulation present; test passes doing nothing
-      } else {
-        throw new Error('Unexpected server error');
-      }
-    });
-  });
+      const res = await request(app).get('/api/health');
 
-  describe('GET /api/protected authentication scenario', () => {
-    it('should return 401 or 403 with error message if auth required', async () => {
-      const mockBody = { error: 'Unauthorized' };
-      mockedFetch.mockResolvedValue(new Response(JSON.stringify(mockBody), { status: 401, headers: { 'content-type': 'application/json' } }));
-
-      const response = await fetch(`${baseURL}/api/protected`);
-      if ([401, 403].includes(response.status)) {
-        expect([401, 403]).toContain(response.status);
-        const data = await response.json();
-        expect(data).toHaveProperty('error');
-        expect(typeof data.error).toBe('string');
-      } else {
-        // If not 401/403, auth not required or endpoint missing - no assertion here
-      }
-    });
-
-    it('should handle non-JSON 401/403 response gracefully', async () => {
-      mockedFetch.mockResolvedValue(new Response('Unauthorized', { status: 401 }));
-
-      const response = await fetch(`${baseURL}/api/protected`);
-      if ([401, 403].includes(response.status)) {
-        await expect(response.json()).rejects.toThrow();
-      }
+      expect(res.status).toBe(503);
+      expect(res.body).toHaveProperty('error', 'Service or database unavailable');
     });
   });
 });

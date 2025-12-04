@@ -4,101 +4,137 @@ import { OpenRouterClient } from '../OpenRouterClient';
 import { LLMMessage } from '../../models/LLMMessage';
 
 jest.mock('axios');
-const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 describe('OpenRouterClient Integration Tests', () => {
-  const validModel = 'gpt-4o-mini';
-  const sampleMessages: LLMMessage[] = [
-    { role: 'user', content: 'Hello, world!' },
-  ];
   let client: OpenRouterClient;
 
   beforeEach(() => {
-    jest.clearAllMocks();
     client = new OpenRouterClient();
+    jest.clearAllMocks();
   });
 
-  it('should send a valid request and return the content from response', async () => {
-    const mockContent = 'Hello from OpenRouter!';
-    mockedAxios.post.mockResolvedValueOnce({
-      data: {
-        choices: [
-          {
-            message: {
-              content: mockContent,
+  describe('constructor', () => {
+    it('should set apiKey, baseUrl, and appName', () => {
+      expect((client as any).apiKey).toMatch(/^sk-or-v1-/);
+      expect((client as any).baseUrl).toBe('https://openrouter.ai/api/v1');
+      expect((client as any).appName).toBe('testbot1');
+    });
+  });
+
+  describe('chatCompletion', () => {
+    const model = 'test-model';
+    const messages: LLMMessage[] = [
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Hi there!' },
+    ];
+
+    it('should successfully return content from API response', async () => {
+      const content = 'Response content from model';
+
+      (axios.post as jest.Mock).mockResolvedValue({
+        data: {
+          choices: [
+            {
+              message: {
+                content,
+              },
             },
-          },
-        ],
-      },
+          ],
+        },
+      });
+
+      const response = await client.chatCompletion(model, messages);
+
+      expect(axios.post).toHaveBeenCalledTimes(1);
+      expect(axios.post).toHaveBeenCalledWith(
+        'https://openrouter.ai/api/v1/chat/completions',
+        { model, messages },
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: `Bearer ${(client as any).apiKey}`,
+            'Content-Type': 'application/json',
+            'X-Title': (client as any).appName,
+          }),
+          timeout: 60000,
+        })
+      );
+      expect(response).toBe(content);
     });
 
-    const result = await client.chatCompletion(validModel, sampleMessages);
+    it('should throw an error if apiKey is missing', async () => {
+      // forcibly set apiKey to empty
+      (client as any).apiKey = '';
 
-    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
-    expect(mockedAxios.post).toHaveBeenCalledWith(
-      expect.stringContaining(`${client['baseUrl']}/chat/completions`),
-      {
-        model: validModel,
-        messages: sampleMessages,
-      },
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: expect.stringContaining(client['apiKey']),
-          'Content-Type': 'application/json',
-          'X-Title': client['appName'],
-        }),
-        timeout: 60000,
-      }),
-    );
-
-    expect(result).toBe(mockContent);
-  });
-
-  it('should throw error if response contains no content', async () => {
-    mockedAxios.post.mockResolvedValueOnce({
-      data: {
-        choices: [{ message: {} }],
-      },
+      await expect(client.chatCompletion(model, messages)).rejects.toThrow(
+        'Missing OPENROUTER_API_KEY'
+      );
     });
 
-    await expect(client.chatCompletion(validModel, sampleMessages)).rejects.toThrow(
-      'No content in OpenRouter response',
-    );
-    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
-  });
+    it('should throw an error if response has no content', async () => {
+      (axios.post as jest.Mock).mockResolvedValue({
+        data: {
+          choices: [{}],
+        },
+      });
 
-  it('should throw error if axios throws a client error with response', async () => {
-    const errorResponse = {
-      response: {
-        status: 403,
-        data: { error: 'Forbidden' },
-      },
-      isAxiosError: true,
-      toJSON: () => ({}),
-    };
-    mockedAxios.post.mockRejectedValueOnce(errorResponse);
+      await expect(client.chatCompletion(model, messages)).rejects.toThrow(
+        'No content in OpenRouter response'
+      );
+    });
 
-    await expect(client.chatCompletion(validModel, sampleMessages)).rejects.toThrow(
-      /OpenRouter error: 403/,
-    );
-  });
+    it('should catch axios error and throw formatted error with status and data', async () => {
+      const axiosError = {
+        isAxiosError: true,
+        response: {
+          status: 401,
+          data: { error: 'Unauthorized' },
+        },
+        toJSON: () => ({}),
+      };
+      (axios.isAxiosError as jest.Mock).mockReturnValue(true);
+      (axios.post as jest.Mock).mockRejectedValue(axiosError);
 
-  it('should throw error if axios throws a network error without response', async () => {
-    const networkError = {
-      isAxiosError: true,
-      toJSON: () => ({}),
-      response: undefined,
-      message: 'Network Error',
-    };
-    mockedAxios.post.mockRejectedValueOnce(networkError);
+      await expect(client.chatCompletion(model, messages)).rejects.toThrow(
+        /^OpenRouter error: 401 /
+      );
+    });
 
-    await expect(client.chatCompletion(validModel, sampleMessages)).rejects.toThrow();
-  });
+    it('should rethrow non-axios errors', async () => {
+      (axios.isAxiosError as jest.Mock).mockReturnValue(false);
 
-  it('should throw original error if non-Axios error occurs', async () => {
-    const someError = new Error('Unexpected failure');
-    mockedAxios.post.mockRejectedValueOnce(someError);
+      const customError = new Error('Custom error');
+      (axios.post as jest.Mock).mockRejectedValue(customError);
 
-    await expect(client.chatCompletion(validModel, sampleMessages)).rejects.toThrow('Unexpected failure');
+      await expect(client.chatCompletion(model, messages)).rejects.toBe(customError);
+    });
+
+    it('should include X-Title header only if appName is set', async () => {
+      // Remove appName
+      (client as any).appName = undefined;
+
+      (axios.post as jest.Mock).mockResolvedValue({
+        data: {
+          choices: [
+            {
+              message: { content: 'content' },
+            },
+          ],
+        },
+      });
+
+      await client.chatCompletion(model, messages);
+
+      expect(axios.post).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Object),
+        expect.objectContaining({
+          headers: expect.not.objectContaining({
+            'X-Title': expect.anything(),
+          }),
+        })
+      );
+    });
   });
 });
+
+jest.resetAllMocks();

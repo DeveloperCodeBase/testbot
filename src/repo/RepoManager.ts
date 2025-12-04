@@ -1,8 +1,8 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import logger from '../utils/logger.js';
-import { ensureDir, removeDir, dirExists } from '../utils/fileUtils.js';
+import logger from '../utils/logger';
+import { ensureDir, removeDir, dirExists } from '../utils/fileUtils';
 
 /**
  * Manages repository cloning and workspace isolation

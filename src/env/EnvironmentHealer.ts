@@ -1,8 +1,8 @@
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { BotConfig } from '../config/schema.js';
-import { EnvironmentIssue, AutoFixAction, RemediationStep, IssueSeverity, IssueStage } from '../models/EnvironmentModels.js';
-import { CommandRunner } from '../executor/CommandRunner.js';
-import logger from '../utils/logger.js';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { BotConfig } from '../config/schema';
+import { EnvironmentIssue, AutoFixAction, RemediationStep, IssueSeverity, IssueStage } from '../models/EnvironmentModels';
+import { CommandRunner } from '../executor/CommandRunner';
+import logger from '../utils/logger';
 
 /**
  * Base class for environment healing

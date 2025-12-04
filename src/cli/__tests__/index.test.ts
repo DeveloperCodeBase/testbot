@@ -1,19 +1,27 @@
 // @ts-nocheck
 import { Command } from 'commander';
 import { ConfigLoader } from '../../config/ConfigLoader';
-import { JobOrchestrator } from '../../orchestrator/JobOrchestrator.js';
-import { ReportGenerator } from '../../reporter/ReportGenerator.js';
-import logger from '../../utils/logger.js';
+import { JobOrchestrator } from '../../orchestrator/JobOrchestrator';
+import { ReportGenerator } from '../../reporter/ReportGenerator';
+import logger from '../../utils/logger';
 import path from 'path';
 
 // Mock all dependencies that the CLI uses
-jest.mock('../../config/ConfigLoader.js');
-jest.mock('../../orchestrator/JobOrchestrator.js');
-jest.mock('../../reporter/ReportGenerator.js');
-jest.mock('../../utils/logger.js');
-jest.mock('path', () => ({
-  join: jest.fn((...args) => args.join('/')),
-  resolve: jest.fn((...args) => args.join('/')),
+jest.mock('../../config/ConfigLoader');
+jest.mock('../../orchestrator/JobOrchestrator');
+jest.mock('../../reporter/ReportGenerator');
+jest.mock('../../utils/logger');
+jest.mock('path', () => {
+  const originalPath = jest.requireActual('path');
+  return {
+    ...originalPath,
+    join: jest.fn((...args) => args.join('/')),
+    resolve: jest.fn((...args) => args.join('/')),
+  };
+});
+
+jest.mock('fast-glob', () => ({
+  glob: jest.fn(),
 }));
 
 describe('CLI index.ts', () => {
@@ -61,7 +69,7 @@ describe('CLI index.ts', () => {
 
   describe('applyCliOptions', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { applyCliOptions } = require('../index.js');
+    const { applyCliOptions } = require('../index');
 
     it('should update config based on CLI options', () => {
       const baseConfig = {
@@ -138,7 +146,7 @@ describe('CLI index.ts', () => {
 
       // Need to reset modules to load CLI with fresh mocks
       jest.resetModules();
-      const cli = await import('../index.js');
+      const cli = await import('../index');
 
       // Because program.parse() calls async action and process.exit, we catch error triggered by process.exit mock
       await expect(cli).resolves.toBeDefined();
@@ -162,7 +170,7 @@ describe('CLI index.ts', () => {
       };
 
       // Execute with a repo argument and options, catch exit
-      await expect(analyzeCommand._actionHandler('repo-url', fakeOptions)).resolves.toBeUndefined();
+      await expect(analyzeAction('repo-url', fakeOptions)).resolves.toBeUndefined();
 
       // Check console logs called accordingly
       expect(consoleLogSpy).toHaveBeenCalledWith('\n=== Test Bot Results ===');
@@ -176,7 +184,7 @@ describe('CLI index.ts', () => {
       expect(consoleLogSpy).toHaveBeenCalledWith('\nJSON Report: /path/to/report.json');
       expect(consoleLogSpy).toHaveBeenCalledWith('HTML Report: /path/to/report.html');
 
-      const { default: loggerMock } = await import('../../utils/logger.js');
+      const { default: loggerMock } = await import('../../utils/logger');
       expect(loggerMock.info).toHaveBeenCalledWith('Starting test bot...');
       expect(loggerMock.info).toHaveBeenCalledWith('Test bot completed successfully');
     });
@@ -199,7 +207,7 @@ describe('CLI index.ts', () => {
       setupMocks(result, {});
 
       jest.resetModules();
-      const cli = await import('../index.js');
+      const cli = await import('../index');
       const { program } = cli;
       const analyzeCommand = program.commands.find(cmd => cmd._name === 'analyze');
 
@@ -217,14 +225,14 @@ describe('CLI index.ts', () => {
         verbose: false,
       };
 
-      await expect(analyzeCommand._actionHandler('repo-url', fakeOptions)).rejects.toThrow(/process.exit/);
+      await expect(analyzeAction('repo-url', fakeOptions)).rejects.toThrow(/process.exit/);
 
       expect(consoleErrorSpy).toHaveBeenCalledWith('\nErrors:');
       expect(consoleErrorSpy).toHaveBeenCalledWith('- error1');
       expect(consoleErrorSpy).toHaveBeenCalledWith('- error2');
       expect(processExitSpy).toHaveBeenCalledWith(1);
 
-      const { default: loggerMock } = await import('../../utils/logger.js');
+      const { default: loggerMock } = await import('../../utils/logger');
       expect(loggerMock.info).toHaveBeenCalledWith('Starting test bot...');
     });
 
@@ -235,7 +243,7 @@ describe('CLI index.ts', () => {
       }));
 
       jest.resetModules();
-      const cli = await import('../index.js');
+      const cli = await import('../index');
       const { program } = cli;
       const analyzeCommand = program.commands.find(cmd => cmd._name === 'analyze');
 
@@ -253,12 +261,12 @@ describe('CLI index.ts', () => {
         verbose: false,
       };
 
-      await expect(analyzeCommand._actionHandler('repo-url', fakeOptions)).rejects.toThrow(/process.exit/);
+      await expect(analyzeAction('repo-url', fakeOptions)).rejects.toThrow(/process.exit/);
 
       expect(consoleErrorSpy).toHaveBeenCalledWith('\nError: config error');
       expect(processExitSpy).toHaveBeenCalledWith(1);
 
-      const { default: loggerMock } = await import('../../utils/logger.js');
+      const { default: loggerMock } = await import('../../utils/logger');
       expect(loggerMock.error).toHaveBeenCalledWith(expect.stringContaining('Test bot failed'));
     });
   });

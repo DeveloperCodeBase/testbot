@@ -1,5 +1,5 @@
-import { EnvironmentIssue, AutoFixAction } from './EnvironmentModels.js';
-import { CoverageReport } from './CoverageModels.js';
+import { EnvironmentIssue, AutoFixAction } from './EnvironmentModels';
+import { CoverageReport } from './CoverageModels';
 
 /**
  * Result of a single test suite execution
@@ -43,12 +43,15 @@ export interface TestRunResult {
  */
 export interface JobIssue {
     project: string;
-    stage: 'env_heal' | 'generate' | 'execute' | 'coverage' | 'refine';
-    kind: string;  // e.g. 'JEST_MISSING_PACKAGE', 'TEST_TS_ERROR', 'COVERAGE_BELOW_THRESHOLD'
+    stage: 'env_heal' | 'generate' | 'execute' | 'coverage' | 'refine' | 'llm';
+    kind: string;  // e.g. 'JEST_MISSING_PACKAGE', 'TEST_TS_ERROR', 'COVERAGE_BELOW_THRESHOLD', 'LLM_CALL_FAILED'
     severity: 'info' | 'warning' | 'error';
     message: string;
     suggestion: string;
     details?: string;
+    // LLM-specific fields (populated when stage === 'llm')
+    modelName?: string;
+    taskType?: string;  // 'plan' | 'generate' | 'heal' | 'analyze' | 'transform'
 }
 
 /**
@@ -78,4 +81,16 @@ export interface JobResult {
         overallCoverage?: number;
     };
     issues: JobIssue[];  // Structured issues with suggestions
+    llmUsage?: {         // LLM usage statistics
+        totalTokensEstimated: number;
+        modelUsage: {
+            [modelName: string]: {
+                callCount: number;
+                tokensEstimated: number;
+            };
+        };
+        taskBreakdown: {
+            [taskType: string]: number; // token count per task type
+        };
+    };
 }

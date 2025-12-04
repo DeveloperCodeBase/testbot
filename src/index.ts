@@ -1,7 +1,7 @@
-import { ConfigLoader } from './config/ConfigLoader.js';
-import { JobOrchestrator } from './orchestrator/JobOrchestrator.js';
-import { ReportGenerator } from './reporter/ReportGenerator.js';
-import logger from './utils/logger.js';
+import { ConfigLoader } from './config/ConfigLoader';
+import { JobOrchestrator } from './orchestrator/JobOrchestrator';
+import { ReportGenerator } from './reporter/ReportGenerator';
+import logger from './utils/logger';
 require('dotenv').config();
 /**
  * Main entry point for programmatic usage
@@ -40,11 +40,11 @@ export async function runTestBot(repoInput: string, configPath?: string) {
 }
 
 // Export main components for library usage
-export { ConfigLoader } from './config/ConfigLoader.js';
-export { JobOrchestrator } from './orchestrator/JobOrchestrator.js';
-export { ReportGenerator } from './reporter/ReportGenerator.js';
-export * from './models/ProjectDescriptor.js';
-export * from './models/ArchitectureModel.js';
-export * from './models/TestRunResult.js';
-export * from './models/CoverageReport.js';
-export * from './config/schema.js';
+export { ConfigLoader } from './config/ConfigLoader';
+export { JobOrchestrator } from './orchestrator/JobOrchestrator';
+export { ReportGenerator } from './reporter/ReportGenerator';
+export * from './models/ProjectDescriptor';
+export * from './models/ArchitectureModel';
+export * from './models/TestRunResult';
+export * from './models/CoverageReport';
+export * from './config/schema';

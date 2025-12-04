@@ -1,6 +1,6 @@
-import { execAsync } from '../utils/execUtils.js';
-import { fileExists, readFile } from '../utils/fileUtils.js';
-import logger from '../utils/logger.js';
+import { execAsync } from '../utils/execUtils';
+import { fileExists, readFile } from '../utils/fileUtils';
+import logger from '../utils/logger';
 import path from 'path';
 
 /**

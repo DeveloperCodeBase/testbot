@@ -1,5 +1,5 @@
-import { SyntaxValidator, ValidationResult } from '../validator/SyntaxValidator.js';
-import { EnvironmentIssue } from './EnvironmentModels.js';
+import { SyntaxValidator, ValidationResult } from '../validator/SyntaxValidator';
+import { EnvironmentIssue } from './EnvironmentModels';
 
 /**
  * Integrates syntax validation into test execution flow

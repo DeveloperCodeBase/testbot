@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { ConfigLoader } from '../config/ConfigLoader.js';
-import { JobOrchestrator } from '../orchestrator/JobOrchestrator.js';
-import { ReportGenerator } from '../reporter/ReportGenerator.js';
-import logger from '../utils/logger.js';
-import { BotConfig } from '../config/schema.js';
+import { ConfigLoader } from '../config/ConfigLoader';
+import { JobOrchestrator } from '../orchestrator/JobOrchestrator';
+import { ReportGenerator } from '../reporter/ReportGenerator';
+import logger from '../utils/logger';
+import { BotConfig } from '../config/schema';
 import path from 'path';
 
 const program = new Command();
@@ -31,60 +31,62 @@ program
     .option('--auto-fix-deps-only', 'Only auto-fix dependencies')
     .option('--auto-fix-config-only', 'Only auto-fix configuration')
     .option('-v, --verbose', 'Verbose output')
-    .action(async (repo: string, options: any) => {
-        try {
-            logger.info('Starting test bot...');
+    .action(analyzeAction);
 
-            // Load configuration
-            const configLoader = new ConfigLoader();
-            let config = await configLoader.load(options.config);
+async function analyzeAction(repo: string, options: any) {
+    try {
+        logger.info('Starting test bot...');
 
-            // Apply CLI options
-            config = applyCliOptions(config, options);
+        // Load configuration
+        const configLoader = new ConfigLoader();
+        let config = await configLoader.load(options.config);
 
-            // Execute job
-            const orchestrator = new JobOrchestrator(config);
-            const result = await orchestrator.execute(repo);
+        // Apply CLI options
+        config = applyCliOptions(config, options);
 
-            // Generate reports
-            const outputDir = path.resolve(options.output, result.jobId);
-            const reportGenerator = new ReportGenerator();
-            const reports = await reportGenerator.generateReports(
-                result,
-                outputDir,
-                config.output.format as ('json' | 'html')[]
-            );
+        // Execute job
+        const orchestrator = new JobOrchestrator(config);
+        const result = await orchestrator.execute(repo);
 
-            // Print summary
-            console.log('\n=== Test Bot Results ===');
-            console.log(`Status: ${result.status}`);
-            console.log(`Projects: ${result.summary.totalProjects}`);
-            console.log(`Total Tests: ${result.summary.totalTests}`);
-            console.log(`Passed: ${result.summary.passedTests}`);
-            console.log(`Failed: ${result.summary.failedTests}`);
-            console.log(`Generated Files: ${result.generatedTestFiles.length}`);
-            console.log(`Duration: ${(result.duration / 1000).toFixed(2)}s`);
+        // Generate reports
+        const outputDir = path.resolve(options.output, result.jobId);
+        const reportGenerator = new ReportGenerator();
+        const reports = await reportGenerator.generateReports(
+            result,
+            outputDir,
+            config.output.format as ('json' | 'html')[]
+        );
 
-            if (reports.jsonPath) {
-                console.log(`\nJSON Report: ${reports.jsonPath}`);
-            }
-            if (reports.htmlPath) {
-                console.log(`HTML Report: ${reports.htmlPath}`);
-            }
+        // Print summary
+        console.log('\n=== Test Bot Results ===');
+        console.log(`Status: ${result.status}`);
+        console.log(`Projects: ${result.summary.totalProjects}`);
+        console.log(`Total Tests: ${result.summary.totalTests}`);
+        console.log(`Passed: ${result.summary.passedTests}`);
+        console.log(`Failed: ${result.summary.failedTests}`);
+        console.log(`Generated Files: ${result.generatedTestFiles.length}`);
+        console.log(`Duration: ${(result.duration / 1000).toFixed(2)}s`);
 
-            if (result.status === 'failed') {
-                console.error('\nErrors:');
-                result.errors.forEach(err => console.error(`- ${err}`));
-                process.exit(1);
-            }
+        if (reports.jsonPath) {
+            console.log(`\nJSON Report: ${reports.jsonPath}`);
+        }
+        if (reports.htmlPath) {
+            console.log(`HTML Report: ${reports.htmlPath}`);
+        }
 
-            logger.info('Test bot completed successfully');
-        } catch (error) {
-            logger.error(`Test bot failed: ${error}`);
-            console.error(`\nError: ${error instanceof Error ? error.message : String(error)}`);
+        if (result.status === 'failed') {
+            console.error('\nErrors:');
+            result.errors.forEach(err => console.error(`- ${err}`));
             process.exit(1);
         }
-    });
+
+        logger.info('Test bot completed successfully');
+    } catch (error) {
+        logger.error(`Test bot failed: ${error}`);
+        console.error(`\nError: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+    }
+}
 
 /**
  * Apply CLI options to config
@@ -145,4 +147,9 @@ function applyCliOptions(config: BotConfig, options: any): BotConfig {
     return config;
 }
 
-program.parse();
+// Only parse arguments if this module is run directly
+if (require.main === module) {
+    program.parse();
+}
+
+export { program, applyCliOptions, analyzeAction };

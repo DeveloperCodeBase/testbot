@@ -1,9 +1,9 @@
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { EnvironmentHealer } from '../env/EnvironmentHealer.js';
-import { PythonEnvironmentHealer } from '../env/PythonEnvironmentHealer.js';
-import { EnvironmentIssue, AutoFixAction } from '../models/EnvironmentModels.js';
-import { execAsync } from '../utils/execUtils.js';
-import logger from '../utils/logger.js';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { EnvironmentHealer } from '../env/EnvironmentHealer';
+import { PythonEnvironmentHealer } from '../env/PythonEnvironmentHealer';
+import { EnvironmentIssue, AutoFixAction } from '../models/EnvironmentModels';
+import { execAsync } from '../utils/execUtils';
+import logger from '../utils/logger';
 import path from 'path';
 
 /**

@@ -1,19 +1,26 @@
 // @ts-nocheck
 import path from 'path';
-import { StackDetector } from '../StackDetector.js';
-import * as fileUtils from '../../utils/fileUtils.js';
+import { StackDetector } from '../StackDetector';
+import * as fileUtils from '../../utils/fileUtils';
 
-jest.mock('../../utils/fileUtils.js', () => ({
+jest.mock('../../utils/fileUtils', () => ({
   fileExists: jest.fn(),
   findFiles: jest.fn(),
   readFile: jest.fn(),
 }));
 
-jest.mock('../../utils/logger.js', () => ({
+jest.mock('../../utils/logger', () => ({
+  __esModule: true,
   default: {
     info: jest.fn(),
     warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
   },
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
 }));
 
 describe('StackDetector', () => {
@@ -77,7 +84,7 @@ describe('StackDetector', () => {
       expect(analysis.isMonorepo).toBe(true);
 
       // Ensure logger.info called with expected messages
-      const { default: logger } = await import('../../utils/logger.js');
+      const { default: logger } = await import('../../utils/logger');
       expect(logger.info).toHaveBeenCalledWith('Starting stack detection...');
       expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Detected 3 project(s)'));
     });
@@ -140,14 +147,13 @@ describe('StackDetector', () => {
       findFilesMock.mockResolvedValue([packageJsonPath]);
       readFileMock.mockResolvedValue('invalid json');
 
-      const { default: logger } = await import('../../utils/logger.js');
       const warnSpy = jest.spyOn(logger, 'warn');
 
       const projects = await (stackDetector as any).detectNodeProjects();
 
       expect(projects).toEqual([]);
-      expect(warnSpy).toHaveBeenCalled();
-      expect(warnSpy.mock.calls[0][0]).toMatch(/Failed to parse package.json/);
+      expect(logSpy).toHaveBeenCalled();
+      expect(logSpy.mock.calls[0][0]).toMatch(/Failed to parse package.json/);
     });
   });
 

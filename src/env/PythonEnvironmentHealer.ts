@@ -1,8 +1,8 @@
 import path from 'path';
-import { EnvironmentHealer } from './EnvironmentHealer.js';
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { fileExists, readFile, writeFile, dirExists } from '../utils/fileUtils.js';
-import logger from '../utils/logger.js';
+import { EnvironmentHealer } from './EnvironmentHealer';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { fileExists, readFile, writeFile, dirExists } from '../utils/fileUtils';
+import logger from '../utils/logger';
 
 /**
  * Healer for Python environments
@@ -295,6 +295,12 @@ python_files = test_*.py
 
             // Only add patterns that don't already exist
             const newPatternsToAdd = neededPatterns.filter(p => !currentPatternList.includes(p));
+
+            if (newPatternsToAdd.length === 0) {
+                logger.info('Pytest patterns already up to date');
+                this.markIssueFixed(issueCode, []);
+                return;
+            }
 
             if (newPatternsToAdd.length > 0) {
                 const updatedPatterns = currentPatterns + ' ' + newPatternsToAdd.join(' ');

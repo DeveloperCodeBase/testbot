@@ -1,17 +1,17 @@
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { TestRunResult, TestSuiteResult } from '../models/TestRunResult.js';
-import { EnvironmentIssue, AutoFixAction } from '../models/EnvironmentModels.js';
-import { AdapterRegistry } from '../adapters/AdapterRegistry.js';
-import { CommandRunner } from './CommandRunner.js';
-import { BotConfig } from '../config/schema.js';
-import logger from '../utils/logger.js';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { TestRunResult, TestSuiteResult } from '../models/TestRunResult';
+import { EnvironmentIssue, AutoFixAction } from '../models/EnvironmentModels';
+import { AdapterRegistry } from '../adapters/AdapterRegistry';
+import { CommandRunner } from './CommandRunner';
+import { BotConfig } from '../config/schema';
+import logger from '../utils/logger';
 import path from 'path';
-import { fileExists, findFiles } from '../utils/fileUtils.js';
-import { JestAutoFixLoop } from './JestAutoFixLoop.js';
-import { PytestAutoFixLoop } from './PytestAutoFixLoop.js';
-import { NodeEnvironmentHealer } from '../env/NodeEnvironmentHealer.js';
-import { PythonEnvironmentHealer } from '../env/PythonEnvironmentHealer.js';
-import { CoverageAnalyzer } from '../analyzer/CoverageAnalyzer.js';
+import { fileExists, findFiles } from '../utils/fileUtils';
+import { JestAutoFixLoop } from './JestAutoFixLoop';
+import { PytestAutoFixLoop } from './PytestAutoFixLoop';
+import { NodeEnvironmentHealer } from '../env/NodeEnvironmentHealer';
+import { PythonEnvironmentHealer } from '../env/PythonEnvironmentHealer';
+import { CoverageAnalyzer } from '../analyzer/CoverageAnalyzer';
 
 /**
  * Executes tests and collects results
@@ -184,11 +184,40 @@ export class TestExecutor {
         const command = adapter.getTestCommand(project, testType);
         logger.info(`Running ${testType} tests: ${command}`);
 
-        const result = await this.commandRunner.execute(
-            command,
-            projectPath,
-            this.config.execution.timeout
-        );
+        let result;
+
+        // Use Auto-Fix Loop for Node/TypeScript projects
+        if (project.language === 'typescript' || project.language === 'javascript') {
+            const healer = new NodeEnvironmentHealer(this.config);
+            const loop = new JestAutoFixLoop();
+            // We pass empty generatedFiles array as we are in execution phase, not generation phase
+            // The loop will still validate syntax of existing files
+            const loopResult = await loop.executeWithAutoFix(project, projectPath, healer, [], command);
+
+            // Merge any new issues/actions
+            envIssues.push(...loopResult.finalIssues);
+            // We don't have easy access to envActions here without changing signature, 
+            // but issues are most important for reporting.
+
+            // If success, we need to reconstruct a "success" result from the last run
+            // Since executeWithAutoFix doesn't return the raw result, we might need to capture it
+            // For now, let's fall back to running the command one last time to capture output/logs
+            // OR modify JestAutoFixLoop to return the last execution result.
+
+            // Simpler approach: If loop succeeded, run command one last time to get clean output for report
+            // If loop failed, run command to capture failure output
+            result = await this.commandRunner.execute(
+                command,
+                projectPath,
+                this.config.execution.timeout
+            );
+        } else {
+            result = await this.commandRunner.execute(
+                command,
+                projectPath,
+                this.config.execution.timeout
+            );
+        }
 
         // Save logs
         const logsDir = path.join(this.artifactsDir, project.name, testType);

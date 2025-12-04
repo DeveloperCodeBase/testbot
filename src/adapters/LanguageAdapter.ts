@@ -1,5 +1,5 @@
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { CoverageReport } from '../models/CoverageReport.js';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { CoverageReport } from '../models/CoverageReport';
 
 /**
  * Base interface for language adapters

@@ -1,265 +1,361 @@
 // @ts-nocheck
 import path from 'path';
-import { NodeAdapter } from '../NodeAdapter.js';
-import { ProjectDescriptor } from '../../models/ProjectDescriptor.js';
-import { readFile } from '../../utils/fileUtils.js';
+import { NodeAdapter } from '../NodeAdapter';
+import { ProjectDescriptor } from '../../models/ProjectDescriptor';
+import * as fileUtils from '../../utils/fileUtils';
 
-jest.mock('../../utils/fileUtils.js', () => ({
-  readFile: jest.fn(),
-}));
+jest.mock('../../utils/fileUtils');
 
 describe('NodeAdapter', () => {
   let adapter: NodeAdapter;
 
   beforeEach(() => {
     adapter = new NodeAdapter();
-    jest.resetAllMocks();
+    jest.clearAllMocks();
+  });
+
+  describe('language property', () => {
+    it('should return language as javascript', () => {
+      expect(adapter.language).toBe('javascript');
+    });
   });
 
   describe('canHandle', () => {
-    it('should return true for javascript projects', () => {
-      const project: ProjectDescriptor = { language: 'javascript' };
-      expect(adapter.canHandle(project)).toBe(true);
+    it('returns true for javascript language', () => {
+      expect(adapter.canHandle({ language: 'javascript' } as any)).toBe(true);
     });
 
-    it('should return true for typescript projects', () => {
-      const project: ProjectDescriptor = { language: 'typescript' };
-      expect(adapter.canHandle(project)).toBe(true);
+    it('returns true for typescript language', () => {
+      expect(adapter.canHandle({ language: 'typescript' } as any)).toBe(true);
     });
 
-    it('should return false for other languages', () => {
-      const project: ProjectDescriptor = { language: 'python' };
-      expect(adapter.canHandle(project)).toBe(false);
-      expect(adapter.canHandle({ language: '' })).toBe(false);
+    it('returns false for other language', () => {
+      expect(adapter.canHandle({ language: 'java' } as any)).toBe(false);
+    });
+
+    it('returns false when language not defined', () => {
+      expect(adapter.canHandle({} as any)).toBe(false);
     });
   });
 
   describe('getTestFramework', () => {
-    it('should return project testFramework if set', () => {
-      const project: ProjectDescriptor = { language: 'javascript', testFramework: 'mocha' };
-      expect(adapter.getTestFramework(project)).toBe('mocha');
+    it('returns project testFramework if defined', () => {
+      expect(adapter.getTestFramework({ testFramework: 'mocha' } as any)).toBe('mocha');
     });
 
-    it('should default to jest if no testFramework', () => {
-      const project: ProjectDescriptor = { language: 'typescript' };
-      expect(adapter.getTestFramework(project)).toBe('jest');
+    it('returns jest as default', () => {
+      expect(adapter.getTestFramework({} as any)).toBe('jest');
     });
   });
 
   describe('getBuildCommand', () => {
-    it('should return build command for typescript project', () => {
-      const project: ProjectDescriptor = { language: 'typescript', packageManager: 'yarn' };
+    it('returns build command if language is typescript', () => {
+      const project = { language: 'typescript', packageManager: 'yarn' } as ProjectDescriptor;
+      jest.spyOn(adapter as any, 'getPackageManager').mockReturnValue('yarn');
       expect(adapter.getBuildCommand(project)).toBe('yarn run build');
     });
 
-    it('should default package manager to npm if undefined', () => {
-      const project: ProjectDescriptor = { language: 'typescript' };
+    it('returns npm run build if packageManager not specified', () => {
+      const project = { language: 'typescript' } as ProjectDescriptor;
       expect(adapter.getBuildCommand(project)).toBe('npm run build');
     });
 
-    it('should return null for javascript projects', () => {
-      expect(adapter.getBuildCommand({ language: 'javascript' })).toBeNull();
+    it('returns null if language not typescript', () => {
+      const project = { language: 'javascript' } as ProjectDescriptor;
+      expect(adapter.getBuildCommand(project)).toBeNull();
     });
   });
 
   describe('getTestCommand', () => {
-    const baseProject = { language: 'javascript', packageManager: 'npm' };
+    const testTypes: ('unit' | 'integration' | 'e2e')[] = ['unit', 'integration', 'e2e'];
 
-    it('should return script commands for react framework', () => {
-      const project = { ...baseProject, testFramework: 'react', framework: 'react', packageManager: 'yarn' };
+    describe('when using react framework', () => {
+      const project: ProjectDescriptor = {
+        framework: 'react',
+        packageManager: 'npm',
+      };
 
-      expect(adapter.getTestCommand(project, 'unit')).toBe('yarn run test:unit');
-      expect(adapter.getTestCommand(project, 'integration')).toBe('yarn run test:integration');
-      expect(adapter.getTestCommand(project, 'e2e')).toBe('yarn run test:e2e');
+      it('returns npm run scripts for different test types', () => {
+        expect(adapter.getTestCommand(project, 'unit')).toBe('npm run test:unit');
+        expect(adapter.getTestCommand(project, 'integration')).toBe('npm run test:integration');
+        expect(adapter.getTestCommand(project, 'e2e')).toBe('npm run test:e2e');
+      });
     });
 
-    it('should return jest commands for testType', () => {
-      const project = { ...baseProject, testFramework: 'jest' };
-      expect(adapter.getTestCommand(project, 'unit')).toBe('npm test -- --testPathPattern="src/.*__tests__"');
-      expect(adapter.getTestCommand(project, 'integration')).toBe('npm test -- --testPathPattern=".*\\.integration\\.test"');
-      expect(adapter.getTestCommand(project, 'e2e')).toBe('npm test -- --testPathPattern="e2e"');
+    describe('when using jest test framework', () => {
+      const project: ProjectDescriptor = {
+        testFramework: 'jest',
+        packageManager: 'npm',
+      };
+      beforeEach(() => {
+        jest.spyOn(adapter as any, 'getPackageManager').mockReturnValue('npm');
+        jest.spyOn(adapter, 'getTestFramework').mockReturnValue('jest');
+      });
+
+      it('returns correct test commands by testType', () => {
+        expect(adapter.getTestCommand(project, 'unit')).toBe('npm test -- --testPathPattern="src/.*__tests__"');
+        expect(adapter.getTestCommand(project, 'integration')).toBe('npm test -- --testPathPattern=".*\\.integration\\.test"');
+        expect(adapter.getTestCommand(project, 'e2e')).toBe('npm test -- --testPathPattern="e2e"');
+      });
     });
 
-    it('should return mocha commands for testType', () => {
-      const project = { ...baseProject, testFramework: 'mocha' };
-      expect(adapter.getTestCommand(project, 'unit')).toBe('npm test');
-      expect(adapter.getTestCommand(project, 'integration')).toBe('npm test -- --grep integration');
-      expect(adapter.getTestCommand(project, 'e2e')).toBe('npm test -- --grep e2e');
+    describe('when using mocha test framework', () => {
+      const project: ProjectDescriptor = {
+        testFramework: 'mocha',
+        packageManager: 'npm',
+      };
+      beforeEach(() => {
+        jest.spyOn(adapter as any, 'getPackageManager').mockReturnValue('npm');
+        jest.spyOn(adapter, 'getTestFramework').mockReturnValue('mocha');
+      });
+
+      it('returns correct test commands by testType', () => {
+        expect(adapter.getTestCommand(project, 'unit')).toBe('npm test');
+        expect(adapter.getTestCommand(project, 'integration')).toBe('npm test -- --grep integration');
+        expect(adapter.getTestCommand(project, 'e2e')).toBe('npm test -- --grep e2e');
+      });
     });
 
-    it('should return vitest run command for vitest framework', () => {
-      const project = { ...baseProject, testFramework: 'vitest' };
-      expect(adapter.getTestCommand(project, 'unit')).toBe('npx vitest run');
-      expect(adapter.getTestCommand(project, 'integration')).toBe('npx vitest run');
-      expect(adapter.getTestCommand(project, 'e2e')).toBe('npx vitest run');
+    describe('when using vitest test framework', () => {
+      it('returns npx vitest run command for vitest framework', () => {
+        const project: ProjectDescriptor = {
+          testFramework: 'vitest',
+          packageManager: 'npm',
+        };
+        jest.spyOn(adapter as any, 'getPackageManager').mockReturnValue('npm');
+        jest.spyOn(adapter, 'getTestFramework').mockReturnValue('vitest');
+
+        expect(adapter.getTestCommand(project, 'unit')).toBe('npx vitest run');
+        expect(adapter.getTestCommand(project, 'integration')).toBe('npx vitest run');
+        expect(adapter.getTestCommand(project, 'e2e')).toBe('npx vitest run');
+      });
+
+      it('returns npx vitest run command for react framework too (fallback)', () => {
+        const project: ProjectDescriptor = {
+          framework: 'react',
+          packageManager: 'npm',
+          testFramework: 'react',
+        };
+        jest.spyOn(adapter as any, 'getPackageManager').mockReturnValue('npm');
+        jest.spyOn(adapter, 'getTestFramework').mockReturnValue('react');
+
+        expect(adapter.getTestCommand(project, 'unit')).toBe('npm run test:unit');
+      });
     });
 
-    it('should return vitest run command for react testFramework (fallback)', () => {
-      const project = { ...baseProject, testFramework: 'react' };
-      expect(adapter.getTestCommand(project, 'unit')).toBe('npx vitest run');
-    });
-
-    it('should fallback to default test command', () => {
-      const project = { ...baseProject, testFramework: 'unknown' };
-      expect(adapter.getTestCommand(project, 'unit')).toBe('npm test');
+    describe('fallback behavior', () => {
+      it('returns default npm test command for unknown testFramework', () => {
+        const project: ProjectDescriptor = {
+          testFramework: 'unknown',
+          packageManager: 'npm',
+        };
+        jest.spyOn(adapter as any, 'getPackageManager').mockReturnValue('npm');
+        jest.spyOn(adapter, 'getTestFramework').mockReturnValue('unknown');
+        expect(adapter.getTestCommand(project, 'unit')).toBe('npm test');
+      });
     });
   });
 
   describe('getCoverageCommand', () => {
-    it('should return jest coverage command', () => {
-      const project = { language: 'javascript', testFramework: 'jest', packageManager: 'yarn' };
-      expect(adapter.getCoverageCommand(project)).toBe('yarn test -- --coverage --coverageReporters=json-summary --coverageReporters=json');
+    it('returns coverage command for jest framework', () => {
+      const project: ProjectDescriptor = {
+        testFramework: 'jest',
+        packageManager: 'yarn',
+      };
+      jest.spyOn(adapter as any, 'getPackageManager').mockReturnValue('yarn');
+      jest.spyOn(adapter, 'getTestFramework').mockReturnValue('jest');
+      expect(adapter.getCoverageCommand(project)).toBe(
+        'yarn test -- --coverage --coverageReporters=json-summary --coverageReporters=json',
+      );
     });
 
-    it('should return vitest coverage command', () => {
-      const project = { language: 'typescript', testFramework: 'vitest', packageManager: 'npm' };
+    it('returns coverage command for vitest framework', () => {
+      const project: ProjectDescriptor = {
+        testFramework: 'vitest',
+        packageManager: 'npm',
+      };
+      jest.spyOn(adapter as any, 'getPackageManager').mockReturnValue('npm');
+      jest.spyOn(adapter, 'getTestFramework').mockReturnValue('vitest');
       expect(adapter.getCoverageCommand(project)).toBe('npm run test -- --coverage');
     });
 
-    it('should return null for other frameworks', () => {
-      const project = { language: 'javascript', testFramework: 'mocha' };
-      expect(adapter.getCoverageCommand(project)).toBeNull();
+    it('returns null if unsupported framework', () => {
+      jest.spyOn(adapter, 'getTestFramework').mockReturnValue('mocha');
+      expect(adapter.getCoverageCommand({ packageManager: 'npm' } as any)).toBeNull();
     });
   });
 
   describe('getTestFilePath', () => {
-    const baseProjectJS = { language: 'javascript' } as ProjectDescriptor;
-    const reactProject = { language: 'typescript', framework: 'react' } as ProjectDescriptor;
+    it('returns jsx extension when source ends with .ts and react framework for unit test', () => {
+      const sourceFile = 'src/somefile.ts';
+      const project = { framework: 'react' } as ProjectDescriptor;
 
-    it('should use .ts extension if source file ends with .ts', () => {
-      expect(adapter.getTestFilePath('foo.ts', 'unit', baseProjectJS)).toBe(path.join('tests', 'unit', 'foo.test.ts'));
-      expect(adapter.getTestFilePath('foo.ts', 'integration', baseProjectJS)).toBe(path.join('tests', 'integration', 'foo.integration.test.ts'));
-      expect(adapter.getTestFilePath('foo.ts', 'e2e', baseProjectJS)).toBe(path.join('tests', 'e2e', 'foo.e2e.test.ts'));
+      const expected = path.join('src', 'tests', 'unit', 'somefile.test.tsx');
+      expect(adapter.getTestFilePath(sourceFile, 'unit', project)).toBe(expected);
     });
 
-    it('should use .js extension if source file ends with .js', () => {
-      expect(adapter.getTestFilePath('foo.js', 'unit', baseProjectJS)).toBe(path.join('tests', 'unit', 'foo.test.js'));
+    it('returns proper path for integration test under react framework', () => {
+      const sourceFile = 'app/component.ts';
+      const project = { framework: 'react' } as ProjectDescriptor;
+      const expected = path.join('src', 'tests', 'integration', 'component.test.tsx');
+      expect(adapter.getTestFilePath(sourceFile, 'integration', project)).toBe(expected);
     });
 
-    it('should use jsx/tsx extension for react framework, appending x', () => {
-      expect(adapter.getTestFilePath('foo.ts', 'unit', reactProject)).toBe(path.join('src', 'tests', 'unit', 'foo.test.tsx'));
-      expect(adapter.getTestFilePath('foo.js', 'integration', reactProject)).toBe(path.join('src', 'tests', 'integration', 'foo.test.jsx'));
-      expect(adapter.getTestFilePath('foo.ts', 'e2e', reactProject)).toBe(path.join('src', 'tests', 'e2e', 'foo.test.tsx'));
+    it('returns proper path for e2e test under react framework', () => {
+      const sourceFile = 'lib/util.ts';
+      const project = { framework: 'react' } as ProjectDescriptor;
+      const expected = path.join('src', 'tests', 'e2e', 'util.test.tsx');
+      expect(adapter.getTestFilePath(sourceFile, 'e2e', project)).toBe(expected);
     });
 
-    it('should return fallback test file path if unknown testType', () => {
-      // @ts-expect-error testing unknown test type
-      expect(adapter.getTestFilePath('foo.ts', 'unknown', baseProjectJS)).toBe('foo.ts.test.ts');
+    it('returns .ts suffix and correct naming for non-react unit test', () => {
+      const sourceFile = 'lib/util.ts';
+      const project = {} as ProjectDescriptor;
+      expect(adapter.getTestFilePath(sourceFile, 'unit', project)).toBe(path.join('tests', 'unit', 'util.test.ts'));
+    });
+
+    it('returns .js suffix for .js sourceFile with correct naming', () => {
+      const sourceFile = 'index.js';
+      const project = {} as ProjectDescriptor;
+      expect(adapter.getTestFilePath(sourceFile, 'integration', project)).toBe(path.join('tests', 'integration', 'index.integration.test.js'));
+    });
+
+    it('returns .e2e.test.js for js e2e test', () => {
+      const sourceFile = 'server.js';
+      const project = {} as ProjectDescriptor;
+      expect(adapter.getTestFilePath(sourceFile, 'e2e', project)).toBe(path.join('tests', 'e2e', 'server.e2e.test.js'));
+    });
+
+    it('fallback returns sourceFile.test.ext with correct extension', () => {
+      // @ts-expect-error testing fallback
+      expect(adapter.getTestFilePath('foo.ts', 'unknown', { framework: 'react' } as any)).toBe('foo.test.tsx');
+      // fallback without react framework
+      // @ts-expect-error testing fallback
+      expect(adapter.getTestFilePath('foo.js', 'unknown', {} as any)).toBe('foo.test.js');
     });
   });
 
   describe('getTestDirectory', () => {
-    it('should return src for react or vitest projects', () => {
-      expect(adapter.getTestDirectory({ framework: 'react' } as ProjectDescriptor, 'unit')).toBe('src');
-      expect(adapter.getTestDirectory({ testFramework: 'vitest' } as ProjectDescriptor, 'unit')).toBe('src');
+    it('returns src for react framework', () => {
+      expect(adapter.getTestDirectory({ framework: 'react' } as any, 'unit')).toBe('src');
     });
 
-    it('should return . for other projects', () => {
-      expect(adapter.getTestDirectory({ language: 'javascript' } as ProjectDescriptor, 'unit')).toBe('.');
+    it('returns src for vitest testFramework', () => {
+      expect(adapter.getTestDirectory({ testFramework: 'vitest' } as any, 'unit')).toBe('src');
+    });
+
+    it('returns "." for other configurations', () => {
+      expect(adapter.getTestDirectory({}, 'unit')).toBe('.');
     });
   });
 
   describe('getTestFilePattern', () => {
-    it('should return appropriate glob for unit tests', () => {
+    it('returns correct patterns for unit', () => {
       expect(adapter.getTestFilePattern('unit')).toBe('**/{__tests__,tests}/**/*.test.{ts,js,tsx,jsx}');
     });
 
-    it('should return appropriate glob for integration tests', () => {
+    it('returns correct patterns for integration', () => {
       expect(adapter.getTestFilePattern('integration')).toBe('**/*.integration.test.{ts,js,tsx,jsx}');
     });
 
-    it('should return appropriate glob for e2e tests', () => {
+    it('returns correct patterns for e2e', () => {
       expect(adapter.getTestFilePattern('e2e')).toBe('**/*.e2e.{ts,js,tsx,jsx}');
     });
 
-    it('should return fallback glob for unknown test type', () => {
-      //@ts-expect-error testing unknown type
-      expect(adapter.getTestFilePattern('foo')).toBe('**/*.test.{ts,js,tsx,jsx}');
+    it('returns default pattern for unknown testType', () => {
+      // @ts-expect-error invalid testType
+      expect(adapter.getTestFilePattern('unknown')).toBe('**/*.test.{ts,js,tsx,jsx}');
     });
   });
 
   describe('parseCoverage', () => {
-    const projectPath = '/fake/project';
-    const coverageSummaryPath = path.join(projectPath, 'coverage', 'coverage-summary.json');
+    const mockReadFile = fileUtils.readFile as jest.Mock;
+    const fakeTimestamp = new Date(2023, 4, 10);
 
-    const mockSummary = {
-      total: {
-        lines: { total: 10, covered: 8, pct: 80 },
-        functions: { total: 5, covered: 4, pct: 80 },
-        branches: { total: 3, covered: 3, pct: 100 },
-        statements: { total: 10, covered: 8, pct: 80 },
-      },
-      'file1.js': {
-        lines: { total: 5, covered: 5, pct: 100 },
-        functions: { total: 2, covered: 2, pct: 100 },
-        branches: { total: 1, covered: 1, pct: 100 },
-        statements: { total: 5, covered: 5, pct: 100 },
-      },
-      'file2.js': {
-        lines: { total: 5, covered: 3, pct: 60 },
-        functions: { total: 3, covered: 2, pct: 66 },
-        branches: { total: 2, covered: 2, pct: 100 },
-        statements: { total: 5, covered: 3, pct: 60 },
-      },
-    };
+    beforeAll(() => {
+      jest.useFakeTimers('modern');
+      jest.setSystemTime(fakeTimestamp);
+    });
 
-    it('should parse coverage summary and convert correctly', async () => {
-      (readFile as jest.Mock).mockResolvedValue(JSON.stringify(mockSummary));
+    afterAll(() => {
+      jest.useRealTimers();
+    });
+
+    it('parses coverage-summary.json and returns CoverageReport', async () => {
+      const projectPath = '/my/project';
+      const coverageData = JSON.stringify({
+        total: {
+          lines: { total: 10, covered: 8, pct: 80 },
+          functions: { total: 5, covered: 4, pct: 80 },
+          branches: { total: 4, covered: 3, pct: 75 },
+          statements: { total: 10, covered: 8, pct: 80 },
+        },
+        'src/file1.js': {
+          lines: { total: 5, covered: 5, pct: 100 },
+          functions: { total: 2, covered: 2, pct: 100 },
+          branches: { total: 2, covered: 1, pct: 50 },
+          statements: { total: 5, covered: 5, pct: 100 },
+        },
+      });
+
+      mockReadFile.mockResolvedValueOnce(coverageData);
 
       const report = await adapter.parseCoverage('', projectPath);
 
-      expect(readFile).toHaveBeenCalledWith(coverageSummaryPath);
+      expect(mockReadFile).toHaveBeenCalledWith(path.join(projectPath, 'coverage', 'coverage-summary.json'));
+
       expect(report.overall.lines).toEqual({ total: 10, covered: 8, percentage: 80 });
       expect(report.overall.functions).toEqual({ total: 5, covered: 4, percentage: 80 });
-      expect(report.files).toHaveLength(2);
-      expect(report.files).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: 'file1.js',
-            lines: { total: 5, covered: 5, percentage: 100 },
-            uncoveredLines: [],
-          }),
-          expect.objectContaining({
-            path: 'file2.js',
-            lines: { total: 5, covered: 3, percentage: 60 },
-          }),
-        ]),
-      );
-      expect(typeof report.timestamp).toBe('string');
+      expect(report.overall.branches).toEqual({ total: 4, covered: 3, percentage: 75 });
+      expect(report.overall.statements).toEqual({ total: 10, covered: 8, percentage: 80 });
+
+      expect(report.files.length).toBe(1);
+      const fileCov = report.files[0];
+      expect(fileCov.path).toBe('src/file1.js');
+      expect(fileCov.lines).toEqual({ total: 5, covered: 5, percentage: 100 });
+      expect(fileCov.functions).toEqual({ total: 2, covered: 2, percentage: 100 });
+      expect(fileCov.branches).toEqual({ total: 2, covered: 1, percentage: 50 });
+      expect(fileCov.statements).toEqual({ total: 5, covered: 5, percentage: 100 });
+      expect(fileCov.uncoveredLines).toEqual([]);
+
+      expect(report.timestamp).toBe(fakeTimestamp.toISOString());
     });
 
-    it('should throw error if coverage summary cannot be read or parsed', async () => {
-      (readFile as jest.Mock).mockRejectedValue(new Error('File not found'));
-
-      await expect(adapter.parseCoverage('', projectPath)).rejects.toThrow('Failed to parse coverage');
+    it('throws error if readFile or JSON parse fails', async () => {
+      mockReadFile.mockRejectedValueOnce(new Error('file not found'));
+      await expect(adapter.parseCoverage('', '/bad/path')).rejects.toThrow('Failed to parse coverage: Error: file not found');
     });
   });
 
-  describe('convertCoverage', () => {
-    it('should return zeros if data does not have expected properties', () => {
-      const data = {};
-      // @ts-expect-error testing with empty object
-      expect(adapter['convertCoverage'](data)).toEqual({ total: 0, covered: 0, percentage: 0 });
+  describe('private convertCoverage', () => {
+    it('converts data into CoverageSummary', () => {
+      // @ts-ignore access private method
+      const result = adapter.convertCoverage({ total: 10, covered: 5, pct: 50 });
+      expect(result).toEqual({ total: 10, covered: 5, percentage: 50 });
     });
 
-    it('should return values from data if present', () => {
-      expect(
-        adapter['convertCoverage']({
-          total: 10,
-          covered: 8,
-          pct: 80,
-        }),
-      ).toEqual({ total: 10, covered: 8, percentage: 80 });
+    it('defaults missing fields to zero', () => {
+      // @ts-ignore
+      expect(adapter.convertCoverage({})).toEqual({ total: 0, covered: 0, percentage: 0 });
+      // @ts-ignore
+      expect(adapter.convertCoverage(null)).toEqual({ total: 0, covered: 0, percentage: 0 });
     });
   });
 
-  describe('getPackageManager', () => {
-    it('should return project packageManager if present', () => {
-      expect(adapter['getPackageManager']({ packageManager: 'yarn' } as ProjectDescriptor)).toBe('yarn');
+  describe('private getPackageManager', () => {
+    it('returns packageManager from project', () => {
+      // @ts-ignore access private method
+      expect(adapter.getPackageManager({ packageManager: 'yarn' })).toBe('yarn');
     });
 
-    it('should default to npm if not present', () => {
-      expect(adapter['getPackageManager']({} as ProjectDescriptor)).toBe('npm');
+    it('returns npm if packageManager not specified', () => {
+      // @ts-ignore
+      expect(adapter.getPackageManager({})).toBe('npm');
+    });
+
+    it('returns npm if project is undefined', () => {
+      // @ts-ignore
+      expect(adapter.getPackageManager(undefined)).toBe('npm');
     });
   });
 });

@@ -1,18 +1,18 @@
-import { RepoAnalysis } from '../models/ProjectDescriptor.js';
-import { RepoManager } from '../repo/RepoManager.js';
-import { StackDetector } from '../analyzer/StackDetector.js';
-import { TestGenerator } from '../generator/TestGenerator.js';
-import { TestExecutor } from '../executor/TestExecutor.js';
-import { JobResult, TestRunResult, JobIssue } from '../models/TestRunResult.js';
-import { BotConfig } from '../config/schema.js';
-import logger from '../utils/logger.js';
-import { ensureDir } from '../utils/fileUtils.js';
-import { EnvironmentHealer } from '../env/EnvironmentHealer.js';
-import { NodeEnvironmentHealer } from '../env/NodeEnvironmentHealer.js';
-import { PythonEnvironmentHealer } from '../env/PythonEnvironmentHealer.js';
-import { JavaEnvironmentHealer } from '../env/JavaEnvironmentHealer.js';
-import { EnvironmentIssue, AutoFixAction } from '../models/EnvironmentModels.js';
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
+import { RepoAnalysis } from '../models/ProjectDescriptor';
+import { RepoManager } from '../repo/RepoManager';
+import { StackDetector } from '../analyzer/StackDetector';
+import { TestGenerator } from '../generator/TestGenerator';
+import { TestExecutor } from '../executor/TestExecutor';
+import { JobResult, TestRunResult, JobIssue } from '../models/TestRunResult';
+import { BotConfig } from '../config/schema';
+import logger from '../utils/logger';
+import { ensureDir } from '../utils/fileUtils';
+import { EnvironmentHealer } from '../env/EnvironmentHealer';
+import { NodeEnvironmentHealer } from '../env/NodeEnvironmentHealer';
+import { PythonEnvironmentHealer } from '../env/PythonEnvironmentHealer';
+import { JavaEnvironmentHealer } from '../env/JavaEnvironmentHealer';
+import { EnvironmentIssue, AutoFixAction } from '../models/EnvironmentModels';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
 import path from 'path';
 
 /**
@@ -39,6 +39,7 @@ export class JobOrchestrator {
     private state: JobState = 'INIT';
     private jobId: string = '';
     private errors: string[] = [];
+    private testGenerator?: TestGenerator; // Track for LLM usage stats
 
     constructor(config: BotConfig) {
         this.config = config;
@@ -128,12 +129,12 @@ export class JobOrchestrator {
      */
     private async generateTests(analysis: RepoAnalysis, repoPath: string): Promise<Map<string, string[]>> {
         logger.info('Generating tests...');
-        const generator = new TestGenerator(this.config);
+        this.testGenerator = new TestGenerator(this.config);
         const projectFiles = new Map<string, string[]>();
 
         for (const project of analysis.projects) {
             const projectPath = path.join(repoPath, project.path);
-            const results = await generator.generateAllTests(project, projectPath);
+            const results = await this.testGenerator.generateAllTests(project, projectPath);
 
             // Collect errors from generation
             if (results.errors && results.errors.length > 0) {
@@ -329,6 +330,36 @@ export class JobOrchestrator {
         } else if (hasPartialProjects) {
             status = 'partial';
         }
+
+        // Aggregate LLM usage statistics
+        let llmUsage;
+        if (this.testGenerator) {
+            const usageData = this.testGenerator.getLLMUsageStats();
+            const modelUsage: { [modelName: string]: { callCount: number; tokensEstimated: number } } = {};
+            const taskBreakdown: { [taskType: string]: number } = {};
+
+            usageData.stats.forEach(stat => {
+                // Aggregate by model
+                if (!modelUsage[stat.model]) {
+                    modelUsage[stat.model] = { callCount: 0, tokensEstimated: 0 };
+                }
+                modelUsage[stat.model].callCount++;
+                modelUsage[stat.model].tokensEstimated += stat.tokensEstimated;
+
+                // Aggregate by task
+                if (!taskBreakdown[stat.task]) {
+                    taskBreakdown[stat.task] = 0;
+                }
+                taskBreakdown[stat.task] += stat.tokensEstimated;
+            });
+
+            llmUsage = {
+                totalTokensEstimated: usageData.totalTokens,
+                modelUsage,
+                taskBreakdown
+            };
+        }
+
         return {
             jobId: this.jobId,
             repoPath,
@@ -351,7 +382,8 @@ export class JobOrchestrator {
                 suitesWithDiscoveryErrors,
                 reason,
             },
-            issues: this.buildJobIssues(allEnvIssues, projectResults)
+            issues: this.buildJobIssues(allEnvIssues, projectResults),
+            llmUsage
         };
     }
 

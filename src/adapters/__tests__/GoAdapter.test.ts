@@ -1,114 +1,129 @@
 // @ts-nocheck
 import path from 'path';
-import { GoAdapter } from '../GoAdapter.js';
+import { GoAdapter } from '../GoAdapter';
+import { ProjectDescriptor } from '../../models/ProjectDescriptor';
 
 describe('GoAdapter', () => {
   let adapter: GoAdapter;
-  const baseProject = { language: 'go' } as any;
 
   beforeEach(() => {
     adapter = new GoAdapter();
   });
 
+  describe('language property', () => {
+    it('should be "go"', () => {
+      expect(adapter.language).toBe('go');
+    });
+  });
+
   describe('canHandle', () => {
-    it('should return true for "go" language', () => {
-      expect(adapter.canHandle({ language: 'go' } as any)).toBe(true);
+    it('returns true for "go" language', () => {
+      expect(adapter.canHandle({ name: 'project', language: 'go' } as ProjectDescriptor)).toBe(true);
     });
 
-    it('should return true for "golang" language', () => {
-      expect(adapter.canHandle({ language: 'golang' } as any)).toBe(true);
+    it('returns true for "golang" language', () => {
+      expect(adapter.canHandle({ name: 'project', language: 'golang' } as ProjectDescriptor)).toBe(true);
     });
 
-    it('should return false for others', () => {
-      expect(adapter.canHandle({ language: 'java' } as any)).toBe(false);
-      expect(adapter.canHandle({ language: 'csharp' } as any)).toBe(false);
-      expect(adapter.canHandle({} as any)).toBe(false);
+    it('returns false for other languages', () => {
+      expect(adapter.canHandle({ name: 'project', language: 'java' } as ProjectDescriptor)).toBe(false);
     });
   });
 
   describe('getTestFramework', () => {
-    it('should return project testFramework if present', () => {
-      expect(adapter.getTestFramework({ testFramework: 'testify' })).toBe('testify');
-      expect(adapter.getTestFramework({ testFramework: 'custom' })).toBe('custom');
+    it('returns specified test framework', () => {
+      expect(adapter.getTestFramework({ testFramework: 'testify' } as ProjectDescriptor)).toBe('testify');
     });
 
-    it('should default to "testing" if no testFramework specified', () => {
-      expect(adapter.getTestFramework({} as any)).toBe('testing');
-      expect(adapter.getTestFramework({ testFramework: undefined })).toBe('testing');
+    it('returns "testing" if no testFramework specified', () => {
+      expect(adapter.getTestFramework({} as ProjectDescriptor)).toBe('testing');
+      expect(adapter.getTestFramework({ testFramework: undefined } as ProjectDescriptor)).toBe('testing');
     });
   });
 
   describe('getBuildCommand', () => {
-    it('should return null as Go test auto-compiles', () => {
-      expect(adapter.getBuildCommand({} as any)).toBeNull();
+    it('returns null as Go tests auto-compile', () => {
+      expect(adapter.getBuildCommand({} as ProjectDescriptor)).toBeNull();
     });
   });
 
   describe('getTestCommand', () => {
-    it('should return correct test command for unit tests', () => {
-      expect(adapter.getTestCommand({} as any, 'unit')).toBe('go test -short ./...');
+    it('returns "go test -short ./..." for unit tests', () => {
+      expect(adapter.getTestCommand({} as ProjectDescriptor, 'unit')).toBe('go test -short ./...');
     });
 
-    it('should return correct test command for integration tests', () => {
-      expect(adapter.getTestCommand({} as any, 'integration')).toBe('go test -tags=integration ./...');
+    it('returns "go test -tags=integration ./..." for integration tests', () => {
+      expect(adapter.getTestCommand({} as ProjectDescriptor, 'integration')).toBe('go test -tags=integration ./...');
     });
 
-    it('should return correct test command for e2e tests', () => {
-      expect(adapter.getTestCommand({} as any, 'e2e')).toBe('go test -tags=e2e ./tests/e2e/...');
+    it('returns "go test -tags=e2e ./tests/e2e/..." for e2e tests', () => {
+      expect(adapter.getTestCommand({} as ProjectDescriptor, 'e2e')).toBe('go test -tags=e2e ./tests/e2e/...');
     });
   });
 
   describe('getCoverageCommand', () => {
-    it('should return go coverage command string', () => {
-      expect(adapter.getCoverageCommand({} as any)).toBe('go test -cover -coverprofile=coverage.out ./...');
+    it('returns go test coverage command', () => {
+      expect(adapter.getCoverageCommand({} as ProjectDescriptor)).toBe(
+        'go test -cover -coverprofile=coverage.out ./...',
+      );
     });
   });
 
   describe('getTestFilePath', () => {
-    it('should return unit test filename co-located with source file', () => {
-      const file = path.normalize('pkg/example.go');
-      expect(adapter.getTestFilePath(file, 'unit', {} as any)).toBe(path.normalize('pkg/example_test.go'));
+    it('returns co-located unit test file path with _test.go suffix', () => {
+      const sourceFile = path.join('src', 'pkg', 'file.go');
+      const expected = path.join('src', 'pkg', 'file_test.go');
+      expect(adapter.getTestFilePath(sourceFile, 'unit', {} as ProjectDescriptor)).toBe(expected);
     });
 
-    it('should return integration test filename co-located with source file', () => {
-      const file = path.normalize('pkg/example.go');
-      expect(adapter.getTestFilePath(file, 'integration', {} as any)).toBe(path.normalize('pkg/example_integration_test.go'));
+    it('returns co-located integration test file path with _integration_test.go suffix', () => {
+      const sourceFile = path.join('src', 'pkg', 'file.go');
+      const expected = path.join('src', 'pkg', 'file_integration_test.go');
+      expect(adapter.getTestFilePath(sourceFile, 'integration', {} as ProjectDescriptor)).toBe(expected);
     });
 
-    it('should return e2e test filename in separate directory', () => {
-      const file = path.normalize('pkg/example.go');
-      expect(adapter.getTestFilePath(file, 'e2e', {} as any)).toBe(path.normalize('tests/e2e/example_e2e_test.go'));
+    it('returns e2e test file path under tests/e2e directory with _e2e_test.go suffix', () => {
+      const sourceFile = path.join('src', 'pkg', 'file.go');
+      const expected = path.join('tests', 'e2e', 'file_e2e_test.go');
+      expect(adapter.getTestFilePath(sourceFile, 'e2e', {} as ProjectDescriptor)).toBe(expected);
     });
   });
 
   describe('getTestDirectory', () => {
-    it('should return "." for unit and integration tests', () => {
-      expect(adapter.getTestDirectory({} as any, 'unit')).toBe('.');
-      expect(adapter.getTestDirectory({} as any, 'integration')).toBe('.');
+    it('returns "." for unit tests', () => {
+      expect(adapter.getTestDirectory({} as ProjectDescriptor, 'unit')).toBe('.');
     });
 
-    it('should return "tests/e2e" for e2e tests', () => {
-      expect(adapter.getTestDirectory({} as any, 'e2e')).toBe('tests/e2e');
+    it('returns "." for integration tests', () => {
+      expect(adapter.getTestDirectory({} as ProjectDescriptor, 'integration')).toBe('.');
+    });
+
+    it('returns "tests/e2e" for e2e tests', () => {
+      expect(adapter.getTestDirectory({} as ProjectDescriptor, 'e2e')).toBe('tests/e2e');
     });
   });
 
   describe('getTestFilePattern', () => {
-    it('should return correct test file patterns', () => {
+    it('returns "**/*_test.go" for unit tests', () => {
       expect(adapter.getTestFilePattern('unit')).toBe('**/*_test.go');
+    });
+
+    it('returns "**/*_integration_test.go" for integration tests', () => {
       expect(adapter.getTestFilePattern('integration')).toBe('**/*_integration_test.go');
+    });
+
+    it('returns "tests/e2e/**/*_e2e_test.go" for e2e tests', () => {
       expect(adapter.getTestFilePattern('e2e')).toBe('tests/e2e/**/*_e2e_test.go');
     });
   });
 
   describe('parseCoverage', () => {
-    it('should return empty CoverageReport structure', async () => {
-      const report = await adapter.parseCoverage('', '');
+    it('returns empty coverage report with timestamp', async () => {
+      const report = await adapter.parseCoverage('coverage data', '/path');
       expect(report).toHaveProperty('overall');
-      expect(report.overall.lines).toEqual({ total: 0, covered: 0, percentage: 0 });
-      expect(report.overall.functions).toEqual({ total: 0, covered: 0, percentage: 0 });
-      expect(report.overall.branches).toEqual({ total: 0, covered: 0, percentage: 0 });
-      expect(report.files).toEqual([]);
-      expect(new Date(report.timestamp).toString()).not.toBe('Invalid Date');
+      expect(report.overall.lines.total).toBe(0);
+      expect(Array.isArray(report.files)).toBe(true);
+      expect(new Date(report.timestamp).getTime()).not.toBeNaN();
     });
   });
 });

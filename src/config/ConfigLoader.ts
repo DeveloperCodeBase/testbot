@@ -1,9 +1,9 @@
 import fs from 'fs/promises';
 import path from 'path';
 import yaml from 'js-yaml';
-import { BotConfig, DEFAULT_CONFIG } from './schema.js';
-import { fileExists } from '../utils/fileUtils.js';
-import logger from '../utils/logger.js';
+import { BotConfig, DEFAULT_CONFIG } from './schema';
+import { fileExists } from '../utils/fileUtils';
+import logger from '../utils/logger';
 
 /**
  * Load and validate configuration
@@ -81,6 +81,46 @@ export class ConfigLoader {
         }
         if (process.env.GOOGLE_API_KEY && config.llm.provider === 'gemini') {
             config.llm.api_key = process.env.GOOGLE_API_KEY;
+        }
+        if (process.env.OPENROUTER_API_KEY && config.llm.provider === 'openrouter') {
+            config.llm.api_key = process.env.OPENROUTER_API_KEY;
+        }
+
+        // LLM mode
+        if (process.env.LLM_MODE) {
+            config.llm.mode = process.env.LLM_MODE as 'balanced' | 'cheap' | 'premium';
+        }
+
+        // Model configuration
+        if (process.env.OPENROUTER_MODEL) {
+            config.llm.model = process.env.OPENROUTER_MODEL;
+        }
+
+        // Task-specific models (balanced mode)
+        if (config.llm.mode === 'balanced') {
+            if (!config.llm.models) {
+                config.llm.models = {};
+            }
+            if (process.env.LLM_MODEL_PLANNER) {
+                config.llm.models.planner = process.env.LLM_MODEL_PLANNER;
+            }
+            if (process.env.LLM_MODEL_CODER) {
+                config.llm.models.coder = process.env.LLM_MODEL_CODER;
+            }
+            if (process.env.LLM_MODEL_LONG_CONTEXT) {
+                config.llm.models.long_context = process.env.LLM_MODEL_LONG_CONTEXT;
+            }
+            if (process.env.LLM_MODEL_HELPER) {
+                config.llm.models.helper = process.env.LLM_MODEL_HELPER;
+            }
+        }
+
+        // Token budget
+        if (process.env.LLM_MAX_TOKENS_PER_RUN) {
+            config.llm.max_tokens_per_run = parseInt(process.env.LLM_MAX_TOKENS_PER_RUN, 10);
+        }
+        if (process.env.LLM_TOKEN_WARN_THRESHOLD) {
+            config.llm.token_budget_warn_threshold = parseFloat(process.env.LLM_TOKEN_WARN_THRESHOLD);
         }
 
         // Log level

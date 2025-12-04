@@ -1,10 +1,10 @@
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { ArchitectureModel } from '../models/ArchitectureModel.js';
-import { LLMOrchestrator, LLMRequest } from '../llm/LLMOrchestrator.js';
-import { AdapterRegistry } from '../adapters/AdapterRegistry.js';
-import { BotConfig } from '../config/schema.js';
-import { writeFile, readFile, findSourceFiles as findSourceFilesUtil } from '../utils/fileUtils.js';
-import logger from '../utils/logger.js';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { ArchitectureModel } from '../models/ArchitectureModel';
+import { LLMOrchestrator, LLMRequest } from '../llm/LLMOrchestrator';
+import { AdapterRegistry } from '../adapters/AdapterRegistry';
+import { BotConfig } from '../config/schema';
+import { writeFile, readFile, findSourceFiles as findSourceFilesUtil } from '../utils/fileUtils';
+import logger from '../utils/logger';
 import path from 'path';
 
 /**

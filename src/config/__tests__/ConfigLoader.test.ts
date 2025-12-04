@@ -5,6 +5,7 @@ import yaml from 'js-yaml';
 import { ConfigLoader } from '../ConfigLoader';
 import * as fileUtils from '../../utils/fileUtils';
 import logger from '../../utils/logger';
+import { DEFAULT_CONFIG } from '../schema';
 
 jest.mock('fs/promises');
 jest.mock('js-yaml');
@@ -14,7 +15,6 @@ jest.mock('../../utils/logger');
 describe('ConfigLoader', () => {
   let configLoader: ConfigLoader;
 
-  const DEFAULT_CONFIG = require('../schema.js').DEFAULT_CONFIG;
 
   beforeEach(() => {
     jest.resetAllMocks();
@@ -58,7 +58,7 @@ describe('ConfigLoader', () => {
       const fakeConfig = { enabled_tests: { testB: true } };
       jest.spyOn(configLoader as any, 'loadFromFile').mockResolvedValue(fakeConfig);
       jest.spyOn(configLoader as any, 'mergeWithDefaults').mockReturnValue({ ...DEFAULT_CONFIG, ...fakeConfig });
-      jest.spyOn(configLoader as any, 'applyEnvironmentOverrides').mockImplementation(() => {});
+      jest.spyOn(configLoader as any, 'applyEnvironmentOverrides').mockImplementation(() => { });
 
       const result = await configLoader.load();
 

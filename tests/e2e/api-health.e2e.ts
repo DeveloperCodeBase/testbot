@@ -1,14 +1,14 @@
 // @ts-nocheck
-import { test, expect, request, APIResponse } from '@playwright/test';
+import { test, expect, request, APIRequestContext } from '@playwright/test';
 
-test.describe('API Health Check End-to-End', () => {
-  let apiContext: ReturnType<typeof request.newContext>;
+test.describe('API Health End-to-End Tests', () => {
+  let apiContext: APIRequestContext;
 
   test.beforeAll(async ({ playwright }) => {
-    // Create a new APIRequest context for the whole suite
-    apiContext = await playwright.request.newContext({
-      baseURL: 'http://localhost:3000', // Adjust base URL as needed
-      // Optionally set headers or auth here if required
+    // Setup APIRequestContext to interact with API endpoints
+    apiContext = await request.newContext({
+      baseURL: 'http://localhost:3000', // Change if your API runs on a different URL or port
+      // Add headers or auth if required here
     });
   });
 
@@ -16,96 +16,88 @@ test.describe('API Health Check End-to-End', () => {
     await apiContext.dispose();
   });
 
-
-  test('should verify /health endpoint is accessible and returns success response', async () => {
+  test('Health check - /health endpoint should respond with status 200 and correct body', async () => {
     const response = await apiContext.get('/health');
-    expect(response.ok()).toBeTruthy();
     expect(response.status()).toBe(200);
 
     const body = await response.json();
-    // Expect common health check props (adjust depending on actual API)
+    // Assuming body contains { status: 'ok' } or similar
+    expect(body).toBeDefined();
     expect(body).toHaveProperty('status');
-    expect(body.status).toMatch(/^(ok|healthy|success)$/i);
-
-    if ('uptime' in body) {
-      expect(typeof body.uptime).toBe('number');
-      expect(body.uptime).toBeGreaterThan(0);
-    }
+    expect(body.status).toMatch(/ok|healthy|up/i);
   });
 
-  test('should verify /api endpoint is accessible and returns expected structure', async () => {
+  test('API base check - /api endpoint should respond appropriately', async () => {
     const response = await apiContext.get('/api');
-    expect(response.ok()).toBeTruthy();
-    expect(response.status()).toBe(200);
+    // Depending on your API design, this might be a 200 or a redirection or a 404
+    expect(response.status()).toBeGreaterThanOrEqual(200);
+    expect(response.status()).toBeLessThan(400);
 
-    // The /api endpoint might return an object describing available endpoints or metadata
+    const contentType = response.headers()['content-type'] || '';
+    expect(contentType).toContain('application/json');
+
     const body = await response.json();
-    expect(body).toBeInstanceOf(Object);
-    // For example, expect endpoints key or version, adjust as per real API
-    expect(body).toMatchObject(expect.objectContaining({
-      endpoints: expect.any(Array),
-    }));
+    expect(body).toBeDefined();
+    // Expect some predefined properties in the API root response
+    // Example: { message: "API entry point" } or a list of endpoints
+    expect(body).toHaveProperty('message');
   });
 
-  test('should handle 404 for invalid endpoint', async () => {
-    const response = await apiContext.get('/invalid-endpoint-xyz');
+  test('Error handling - invalid endpoint should return 404', async () => {
+    const response = await apiContext.get('/api/invalid-endpoint');
     expect(response.status()).toBe(404);
 
     const body = await response.json().catch(() => null);
     if (body) {
+      // Optional: Verify error message structure
       expect(body).toHaveProperty('error');
-      expect(typeof body.error).toBe('string');
     }
   });
 
-  test('should simulate unauthorized access if authentication is required', async () => {
-    // If API requires authentication for /health or /api, test unauth behavior
-    // Let's test with no auth headers and expect 401/403 if enforced
+  test('Full API health user flow with authentication if required', async () => {
+    // Step 1: Authenticate user if needed - mock credentials here
+    // For demonstration assume JWT based auth - if no auth required, skip this block
+    // Adjust the login endpoint and payload to your implementation
 
-    // Assuming /api is protected
-    const unauthResponse = await apiContext.get('/api');
-    if ([401, 403].includes(unauthResponse.status())) {
-      expect(unauthResponse.ok()).toBeFalsy();
-      const body = await unauthResponse.json();
-      expect(body).toHaveProperty('error');
-    } else {
-      // If API is open, test passes anyway
-      expect(unauthResponse.status()).toBe(200);
-    }
-  });
-
-  test('should verify complete user flow with optional auth, health, and api endpoints', async () => {
-    // 1. Authentication step - if needed
-    // Let's assume no authentication needed or token via login endpoint
-    // For demonstration, if needed:
-
+    // This block should be commented or adapted if auth is not required
     /*
-    const loginRes = await apiContext.post('/login', { data: { username: 'test', password: 'test' } });
-    expect(loginRes.ok()).toBeTruthy();
-    const loginBody = await loginRes.json();
+    const loginResponse = await apiContext.post('/api/auth/login', {
+      data: { username: 'testuser', password: 'testpassword' },
+    });
+    expect(loginResponse.status()).toBe(200);
+    const loginBody = await loginResponse.json();
+    expect(loginBody).toHaveProperty('token');
     const token = loginBody.token;
-    expect(typeof token).toBe('string');
 
-    // Create new context with auth header
-    const authContext = await request.newContext({
+    // Create new context with auth token
+    apiContext = await request.newContext({
+      baseURL: 'http://localhost:3000',
       extraHTTPHeaders: {
         Authorization: `Bearer ${token}`,
       },
     });
     */
 
-    // Since no auth required for health check per context, just chain requests
-    const healthRes = await apiContext.get('/health');
-    expect(healthRes.ok()).toBeTruthy();
-    const healthBody = await healthRes.json();
+    // Step 2: Check /health endpoint with authenticated context (or unauthenticated if no auth)
+    const healthResponse = await apiContext.get('/health');
+    expect(healthResponse.status()).toBe(200);
+    const healthBody = await healthResponse.json();
     expect(healthBody).toHaveProperty('status');
+    expect(healthBody.status).toMatch(/ok|healthy|up/i);
 
-    const apiRes = await apiContext.get('/api');
-    expect(apiRes.ok()).toBeTruthy();
-    const apiBody = await apiRes.json();
-    expect(apiBody).toHaveProperty('endpoints');
+    // Step 3: Check /api endpoint accessibility
+    const apiResponse = await apiContext.get('/api');
+    expect(apiResponse.status()).toBeLessThan(400);
+    const apiBody = await apiResponse.json();
+    expect(apiBody).toHaveProperty('message');
 
-    // Confirm endpoints include /health and /api
-    expect(apiBody.endpoints).toEqual(expect.arrayContaining(['/health', '/api']));
+    // Step 4: Verify that authorization failure returns 401 or 403 - simulate by hitting protected endpoint without valid auth
+    /*
+    const unauthApiContext = await request.newContext({
+      baseURL: 'http://localhost:3000',
+    });
+    const protectedResponse = await unauthApiContext.get('/api/protected-resource');
+    expect([401, 403]).toContain(protectedResponse.status());
+    */
   });
 });

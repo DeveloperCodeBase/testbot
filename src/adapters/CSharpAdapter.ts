@@ -1,6 +1,6 @@
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { LanguageAdapter } from './LanguageAdapter.js';
-import { CoverageReport } from '../models/CoverageReport.js';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { LanguageAdapter } from './LanguageAdapter';
+import { CoverageReport } from '../models/CoverageReport';
 import path from 'path';
 
 /**
@@ -15,8 +15,8 @@ export class CSharpAdapter implements LanguageAdapter {
     }
 
     getTestFramework(project: ProjectDescriptor): string {
-        // Check if specific framework is specified
-        if (project.testFramework) {
+        // Check if specific framework is specified (including empty string)
+        if (project.testFramework !== undefined) {
             return project.testFramework;
         }
 
@@ -33,6 +33,7 @@ export class CSharpAdapter implements LanguageAdapter {
         // For .NET, we can filter tests by category/trait
         const framework = this.getTestFramework(project);
 
+        // Only apply filters for known frameworks
         if (framework === 'xunit') {
             // xUnit uses traits for categorization
             if (testType === 'unit') {
@@ -53,7 +54,7 @@ export class CSharpAdapter implements LanguageAdapter {
             }
         }
 
-        // Default: run all tests
+        // For unsupported frameworks or empty string: run all tests without filter
         return 'dotnet test';
     }
 

@@ -1,0 +1,19 @@
+enabled_tests:
+  unit: true
+  integration: true
+  e2e: true
+
+coverage:
+  threshold: 80
+  max_refinement_iterations: 3
+
+projects:
+  - name: api-gateway
+    path: services/api-gateway
+    language: typescript
+  - name: user-service
+    path: services/user-service
+    language: python
+  - name: report-worker
+    path: services/report-worker
+    language: csharp

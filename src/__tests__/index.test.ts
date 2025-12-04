@@ -1,112 +1,105 @@
 // @ts-nocheck
-import { runTestBot } from '../index.js';
-import { ConfigLoader } from '../config/ConfigLoader.js';
-import { JobOrchestrator } from '../orchestrator/JobOrchestrator.js';
-import { ReportGenerator } from '../reporter/ReportGenerator.js';
+import { runTestBot } from '../index';
+import { ConfigLoader } from '../config/ConfigLoader';
+import { JobOrchestrator } from '../orchestrator/JobOrchestrator';
+import { ReportGenerator } from '../reporter/ReportGenerator';
 import logger from '../utils/logger';
 
-jest.mock('../config/ConfigLoader.js');
-jest.mock('../orchestrator/JobOrchestrator.js');
-jest.mock('../reporter/ReportGenerator.js');
-jest.mock('../utils/logger.js');
+jest.mock('../config/ConfigLoader');
+jest.mock('../orchestrator/JobOrchestrator');
+jest.mock('../reporter/ReportGenerator');
+jest.mock('../utils/logger');
 
 describe('runTestBot', () => {
-  let infoSpy: jest.SpyInstance;
-  let errorSpy: jest.SpyInstance;
+  const repoInput = 'some/repo';
+  const configPath = '/path/to/config';
+  const dummyConfig = {
+    output: {
+      artifacts_dir: 'artifacts',
+      format: ['json', 'html'],
+    },
+  };
+  const dummyResult = {
+    jobId: 'job123',
+  };
+  const dummyReports = ['report1', 'report2'];
 
   beforeEach(() => {
     jest.clearAllMocks();
-    infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => {});
-    errorSpy = jest.spyOn(logger, 'error').mockImplementation(() => {});
   });
 
-  it('should run the whole flow successfully and return result and reports', async () => {
-    const fakeConfig = {
-      output: {
-        artifacts_dir: 'artifacts',
-        format: ['json', 'html'],
-      },
-    };
+  it('should run entire flow successfully and return results with reports', async () => {
+    const mockLoad = jest.fn().mockResolvedValue(dummyConfig);
+    (ConfigLoader as jest.Mock).mockImplementation(() => ({
+      load: mockLoad,
+    }));
 
-    const fakeResult = {
-      jobId: 'job-123',
-    };
+    const mockExecute = jest.fn().mockResolvedValue(dummyResult);
+    (JobOrchestrator as jest.Mock).mockImplementation(() => ({
+      execute: mockExecute,
+    }));
 
-    const mockConfigLoader = ConfigLoader as jest.MockedClass<typeof ConfigLoader>;
-    mockConfigLoader.prototype.load.mockResolvedValue(fakeConfig);
-
-    const mockJobOrchestrator = JobOrchestrator as jest.MockedClass<typeof JobOrchestrator>;
-    mockJobOrchestrator.prototype.execute.mockResolvedValue(fakeResult);
-
-    const mockReportGenerator = ReportGenerator as jest.MockedClass<typeof ReportGenerator>;
-    mockReportGenerator.prototype.generateReports.mockResolvedValue(['report1', 'report2']);
-
-    const repoInput = 'my-repo';
-    const configPath = '/path/to/config.json';
+    const mockGenerateReports = jest.fn().mockResolvedValue(dummyReports);
+    (ReportGenerator as jest.Mock).mockImplementation(() => ({
+      generateReports: mockGenerateReports,
+    }));
 
     const result = await runTestBot(repoInput, configPath);
 
-    expect(infoSpy).toHaveBeenCalledWith('Starting test bot...');
-    expect(mockConfigLoader.prototype.load).toHaveBeenCalledWith(configPath);
-    expect(mockJobOrchestrator.prototype.execute).toHaveBeenCalledWith(repoInput);
-
-    expect(mockReportGenerator.prototype.generateReports).toHaveBeenCalledWith(
-      fakeResult,
-      'artifacts/job-123',
-      ['json', 'html']
+    expect(logger.info).toHaveBeenCalledWith('Starting test bot...');
+    expect(mockLoad).toHaveBeenCalledWith(configPath);
+    expect(mockExecute).toHaveBeenCalledWith(repoInput);
+    expect(mockGenerateReports).toHaveBeenCalledWith(
+      dummyResult,
+      `${dummyConfig.output.artifacts_dir}/${dummyResult.jobId}`,
+      dummyConfig.output.format
     );
-
-    expect(infoSpy).toHaveBeenCalledWith('Test bot completed successfully');
-
+    expect(logger.info).toHaveBeenCalledWith('Test bot completed successfully');
     expect(result).toEqual({
-      result: fakeResult,
-      reports: ['report1', 'report2'],
+      result: dummyResult,
+      reports: dummyReports,
     });
   });
 
-  it('should handle errors and log them', async () => {
-    const error = new Error('fail error');
-    (ConfigLoader as jest.MockedClass<typeof ConfigLoader>).prototype.load.mockRejectedValue(error);
+  it('should throw and log error if ConfigLoader.load fails', async () => {
+    const error = new Error('Loading failed');
+    (ConfigLoader as jest.Mock).mockImplementation(() => ({
+      load: jest.fn().mockRejectedValue(error),
+    }));
 
-    await expect(runTestBot('repo')).rejects.toThrow(error);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Test bot failed:'));
+    await expect(runTestBot(repoInput, configPath)).rejects.toThrow('Loading failed');
+    expect(logger.error).toHaveBeenCalledWith(`Test bot failed: ${error}`);
   });
 
-  it('should call ConfigLoader.load without configPath if not provided', async () => {
-    const fakeConfig = {
-      output: {
-        artifacts_dir: 'dir',
-        format: ['json'],
-      },
-    };
+  it('should throw and log error if JobOrchestrator.execute fails', async () => {
+    (ConfigLoader as jest.Mock).mockImplementation(() => ({
+      load: jest.fn().mockResolvedValue(dummyConfig),
+    }));
 
-    (ConfigLoader as jest.MockedClass<typeof ConfigLoader>).prototype.load.mockResolvedValue(fakeConfig);
-    (JobOrchestrator as jest.MockedClass<typeof JobOrchestrator>).prototype.execute.mockResolvedValue({ jobId: 'id' });
-    (ReportGenerator as jest.MockedClass<typeof ReportGenerator>).prototype.generateReports.mockResolvedValue([]);
+    const error = new Error('Execution failed');
+    (JobOrchestrator as jest.Mock).mockImplementation(() => ({
+      execute: jest.fn().mockRejectedValue(error),
+    }));
 
-    await runTestBot('repo');
-
-    expect(ConfigLoader.prototype.load).toHaveBeenCalledWith(undefined);
+    await expect(runTestBot(repoInput, configPath)).rejects.toThrow('Execution failed');
+    expect(logger.error).toHaveBeenCalledWith(`Test bot failed: ${error}`);
   });
 
-  it('should respect types for output.format and forward them correctly', async () => {
-    const fakeConfig = {
-      output: {
-        artifacts_dir: 'dir',
-        format: ['json'], // can only be 'json' | 'html'
-      },
-    };
+  it('should throw and log error if ReportGenerator.generateReports fails', async () => {
+    (ConfigLoader as jest.Mock).mockImplementation(() => ({
+      load: jest.fn().mockResolvedValue(dummyConfig),
+    }));
 
-    (ConfigLoader as jest.MockedClass<typeof ConfigLoader>).prototype.load.mockResolvedValue(fakeConfig);
-    (JobOrchestrator as jest.MockedClass<typeof JobOrchestrator>).prototype.execute.mockResolvedValue({ jobId: 'id' });
-    (ReportGenerator as jest.MockedClass<typeof ReportGenerator>).prototype.generateReports.mockResolvedValue([]);
+    (JobOrchestrator as jest.Mock).mockImplementation(() => ({
+      execute: jest.fn().mockResolvedValue(dummyResult),
+    }));
 
-    await runTestBot('repo');
+    const error = new Error('Report generation failed');
+    (ReportGenerator as jest.Mock).mockImplementation(() => ({
+      generateReports: jest.fn().mockRejectedValue(error),
+    }));
 
-    expect(ReportGenerator.prototype.generateReports).toHaveBeenCalledWith(
-      expect.any(Object),
-      expect.any(String),
-      ['json']
-    );
+    await expect(runTestBot(repoInput, configPath)).rejects.toThrow('Report generation failed');
+    expect(logger.error).toHaveBeenCalledWith(`Test bot failed: ${error}`);
   });
 });

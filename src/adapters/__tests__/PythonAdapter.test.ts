@@ -1,194 +1,230 @@
 // @ts-nocheck
 import path from 'path';
-import { PythonAdapter } from '../PythonAdapter.js';
-import { ProjectDescriptor } from '../../models/ProjectDescriptor.js';
-import { readFile } from '../../utils/fileUtils.js';
+import { PythonAdapter } from '../PythonAdapter';
+import { ProjectDescriptor } from '../../models/ProjectDescriptor';
+import { readFile } from '../../utils/fileUtils';
 
-jest.mock('../../utils/fileUtils.js', () => ({
-  readFile: jest.fn(),
-}));
+jest.mock('../../utils/fileUtils');
 
 describe('PythonAdapter', () => {
-  let adapter: PythonAdapter;
+    let adapter: PythonAdapter;
+    const mockReadFile = readFile as jest.MockedFunction<typeof readFile>;
 
-  beforeEach(() => {
-    adapter = new PythonAdapter();
-    jest.resetAllMocks();
-  });
-
-  describe('canHandle', () => {
-    it('should return true for python projects', () => {
-      const project: ProjectDescriptor = { language: 'python' };
-      expect(adapter.canHandle(project)).toBe(true);
+    beforeEach(() => {
+        adapter = new PythonAdapter();
+        jest.clearAllMocks();
     });
 
-    it('should return false for non-python projects', () => {
-      expect(adapter.canHandle({ language: 'javascript' })).toBe(false);
-      expect(adapter.canHandle({ language: 'typescript' })).toBe(false);
-      expect(adapter.canHandle({ language: '' })).toBe(false);
-    });
-  });
-
-  describe('getTestFramework', () => {
-    it('should return project testFramework if set', () => {
-      expect(adapter.getTestFramework({ language: 'python', testFramework: 'unittest' })).toBe('unittest');
+    describe('fields', () => {
+        it('should set language to python', () => {
+            expect(adapter.language).toBe('python');
+        });
     });
 
-    it('should default to pytest if not set', () => {
-      expect(adapter.getTestFramework({ language: 'python' })).toBe('pytest');
-    });
-  });
+    describe('canHandle', () => {
+        it('returns true if project.language is python', () => {
+            const project: ProjectDescriptor = { language: 'python' } as any;
+            expect(adapter.canHandle(project)).toBe(true);
+        });
 
-  describe('getBuildCommand', () => {
-    it('should always return the venv setup command', () => {
-      const result = adapter.getBuildCommand({} as ProjectDescriptor);
-      expect(result).toBe(
-        'python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt || echo "Requirements install failed but continuing"',
-      );
-    });
-  });
+        it('returns false if project.language is not python', () => {
+            const project: ProjectDescriptor = { language: 'javascript' } as any;
+            expect(adapter.canHandle(project)).toBe(false);
+        });
 
-  describe('getTestCommand', () => {
-    it('should return pytest commands for each testType', () => {
-      const project = { testFramework: 'pytest' } as ProjectDescriptor;
-      const pyExec = './.venv/bin/python';
-      expect(adapter.getTestCommand(project, 'unit')).toBe(`${pyExec} -m pytest tests/unit -v`);
-      expect(adapter.getTestCommand(project, 'integration')).toBe(`${pyExec} -m pytest tests/integration -v`);
-      expect(adapter.getTestCommand(project, 'e2e')).toBe(`${pyExec} -m pytest tests/e2e -v`);
+        it('returns false if project.language is undefined', () => {
+            const project = {} as ProjectDescriptor;
+            expect(adapter.canHandle(project)).toBe(false);
+        });
     });
 
-    it('should return unittest discover command when unittest selected, ignoring testType', () => {
-      const project = { testFramework: 'unittest' } as ProjectDescriptor;
-      expect(adapter.getTestCommand(project, 'unit')).toBe('./.venv/bin/python -m unittest discover');
-      expect(adapter.getTestCommand(project, 'integration')).toBe('./.venv/bin/python -m unittest discover');
-      expect(adapter.getTestCommand(project, 'e2e')).toBe('./.venv/bin/python -m unittest discover');
+    describe('getTestFramework', () => {
+        it('returns project.testFramework if defined', () => {
+            const project: ProjectDescriptor = { language: 'python', testFramework: 'unittest' } as any;
+            expect(adapter.getTestFramework(project)).toBe('unittest');
+        });
+        it('defaults to pytest if project.testFramework is undefined', () => {
+            const project: ProjectDescriptor = { language: 'python' } as any;
+            expect(adapter.getTestFramework(project)).toBe('pytest');
+        });
     });
 
-    it('should fallback to pytest if unknown test framework', () => {
-      const project = { testFramework: 'unknown' } as ProjectDescriptor;
-      expect(adapter.getTestCommand(project, 'unit')).toBe('./.venv/bin/python -m pytest -v');
-    });
-  });
-
-  describe('getCoverageCommand', () => {
-    it('should return pytest coverage command with python executable', () => {
-      const project = {} as ProjectDescriptor;
-      expect(adapter.getCoverageCommand(project)).toBe('./.venv/bin/python -m pytest --cov=. --cov-report=json --cov-report=term');
-    });
-  });
-
-  describe('getTestFilePath', () => {
-    const sourceFile = 'module.py';
-
-    it.each([
-      ['unit', path.join('tests', 'unit', 'test_module.py')],
-      ['integration', path.join('tests', 'integration', 'test_module.py')],
-      ['e2e', path.join('tests', 'e2e', 'test_module.py')],
-    ])('should return correct test file path for %s tests', (testType, expected) => {
-      expect(adapter.getTestFilePath(sourceFile, testType as any, {} as ProjectDescriptor)).toBe(expected);
+    describe('getBuildCommand', () => {
+        it('returns the expected venv setup command', () => {
+            const project: ProjectDescriptor = { language: 'python' } as any;
+            expect(adapter.getBuildCommand(project)).toBe(
+                'python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt || echo "Requirements install failed but continuing"',
+            );
+        });
     });
 
-    it('should fallback to generic test file path for unknown test type', () => {
-      // @ts-expect-error testing unknown type
-      expect(adapter.getTestFilePath(sourceFile, 'unknown', {} as ProjectDescriptor)).toBe(path.join('tests', 'test_module.py'));
-    });
-  });
+    describe('getTestCommand', () => {
+        const basePythonExec = './.venv/bin/python';
 
-  describe('getTestDirectory', () => {
-    it.each([
-      ['unit', path.join('tests', 'unit')],
-      ['integration', path.join('tests', 'integration')],
-      ['e2e', path.join('tests', 'e2e')],
-    ])('should return correct test directory for %s tests', (testType, expected) => {
-      expect(adapter.getTestDirectory({} as ProjectDescriptor, testType as any)).toBe(expected);
-    });
-  });
+        it('returns correct pytest command for unit tests', () => {
+            const project: ProjectDescriptor = { language: 'python', testFramework: 'pytest' } as any;
+            const cmd = adapter.getTestCommand(project, 'unit');
+            expect(cmd).toBe(`${basePythonExec} -m pytest tests/unit -v`);
+        });
 
-  describe('getTestFilePattern', () => {
-    it('should always return python test file pattern', () => {
-      expect(adapter.getTestFilePattern('unit')).toBe('**/test_*.py');
-      expect(adapter.getTestFilePattern('integration')).toBe('**/test_*.py');
-      expect(adapter.getTestFilePattern('e2e')).toBe('**/test_*.py');
-    });
-  });
+        it('returns correct pytest command for integration tests', () => {
+            const project: ProjectDescriptor = { language: 'python', testFramework: 'pytest' } as any;
+            const cmd = adapter.getTestCommand(project, 'integration');
+            expect(cmd).toBe(`${basePythonExec} -m pytest tests/integration -v`);
+        });
 
-  describe('parseCoverage', () => {
-    const projectPath = '/fake/python-project';
-    const coverageJsonPath = path.join(projectPath, 'coverage.json');
+        it('returns correct pytest command for e2e tests', () => {
+            const project: ProjectDescriptor = { language: 'python', testFramework: 'pytest' } as any;
+            const cmd = adapter.getTestCommand(project, 'e2e');
+            expect(cmd).toBe(`${basePythonExec} -m pytest tests/e2e -v`);
+        });
 
-    const mockCoverageJson = {
-      files: {
-        'module1.py': {
-          summary: {
-            num_statements: 10,
-            covered_lines: 8,
-            percent_covered: 80,
-          },
-          missing_lines: [3, 5],
-        },
-        'module2.py': {
-          summary: {
-            num_statements: 0,
-            covered_lines: 0,
-            percent_covered: 0,
-          },
-          missing_lines: [],
-        },
-      },
-    };
+        it('returns unittest discover command if framework is unittest', () => {
+            const project: ProjectDescriptor = { language: 'python', testFramework: 'unittest' } as any;
+            const cmd = adapter.getTestCommand(project, 'unit');
+            expect(cmd).toBe(`${basePythonExec} -m unittest discover`);
+            expect(adapter.getTestCommand(project, 'integration')).toBe(`${basePythonExec} -m unittest discover`);
+            expect(adapter.getTestCommand(project, 'e2e')).toBe(`${basePythonExec} -m unittest discover`);
+        });
 
-    it('should parse coverage json and aggregate overall coverage', async () => {
-      (readFile as jest.Mock).mockResolvedValue(JSON.stringify(mockCoverageJson));
-
-      const result = await adapter.parseCoverage('', projectPath);
-
-      // Called with json path
-      expect(readFile).toHaveBeenCalledWith(coverageJsonPath);
-
-      expect(result.files).toHaveLength(2);
-      expect(result.files[0]).toEqual(
-        expect.objectContaining({
-          path: 'module1.py',
-          lines: { total: 10, covered: 8, percentage: 80 },
-          uncoveredLines: [3, 5],
-          functions: { total: 0, covered: 0, percentage: 0 },
-          branches: { total: 0, covered: 0, percentage: 0 },
-        }),
-      );
-
-      // overall coverage lines should be aggregated (10 total, 8 covered)
-      expect(result.overall.lines.total).toBe(10);
-      expect(result.overall.lines.covered).toBe(8);
-      expect(result.overall.lines.percentage).toBeCloseTo(80);
-
-      // functions and branches are zeroed as expected
-      expect(result.overall.functions).toEqual({ total: 0, covered: 0, percentage: 0 });
-      expect(result.overall.branches).toEqual({ total: 0, covered: 0, percentage: 0 });
-
-      expect(typeof result.timestamp).toBe('string');
+        it('falls back to pytest command if unknown framework', () => {
+            const project: ProjectDescriptor = { language: 'python', testFramework: 'unknown' as any } as any;
+            const cmd = adapter.getTestCommand(project, 'unit');
+            expect(cmd).toBe(`${basePythonExec} -m pytest -v`);
+        });
     });
 
-    it('should return zero coverage when no files in coverage.json', async () => {
-      (readFile as jest.Mock).mockResolvedValue(JSON.stringify({ files: {} }));
-
-      const result = await adapter.parseCoverage('', projectPath);
-
-      expect(result.files).toHaveLength(0);
-      expect(result.overall.lines).toEqual({ total: 0, covered: 0, percentage: 0 });
-      expect(result.overall.functions).toEqual({ total: 0, covered: 0, percentage: 0 });
-      expect(result.overall.branches).toEqual({ total: 0, covered: 0, percentage: 0 });
+    describe('getCoverageCommand', () => {
+        it('returns the expected coverage command', () => {
+            const project: ProjectDescriptor = { language: 'python' } as any;
+            const expected = './.venv/bin/python -m pytest --cov=. --cov-report=json --cov-report=term';
+            expect(adapter.getCoverageCommand(project)).toBe(expected);
+        });
     });
 
-    it('should throw error if readFile fails', async () => {
-      (readFile as jest.Mock).mockRejectedValue(new Error('File not found'));
-
-      await expect(adapter.parseCoverage('', projectPath)).rejects.toThrow('Failed to parse coverage');
+    describe('getPythonExecutable (private)', () => {
+        it('returns the venv python path', () => {
+            // Access private method for coverage (though not typical)
+            // @ts-expect-error accessing private
+            expect(adapter.getPythonExecutable({} as ProjectDescriptor)).toBe('./.venv/bin/python');
+        });
     });
-  });
 
-  describe('getPythonExecutable (private)', () => {
-    it('should return .venv python executable path', () => {
-      expect(adapter['getPythonExecutable']({} as ProjectDescriptor)).toBe('./.venv/bin/python');
+    describe('getTestFilePath', () => {
+        const sourceFile = 'foo.py';
+
+        it('returns correct unit test file path', () => {
+            const result = adapter.getTestFilePath(sourceFile, 'unit', {} as ProjectDescriptor);
+            expect(result).toBe(path.join('tests', 'unit', 'test_foo.py'));
+        });
+
+        it('returns correct integration test file path', () => {
+            const result = adapter.getTestFilePath(sourceFile, 'integration', {} as ProjectDescriptor);
+            expect(result).toBe(path.join('tests', 'integration', 'test_foo.py'));
+        });
+
+        it('returns correct e2e test file path', () => {
+            const result = adapter.getTestFilePath(sourceFile, 'e2e', {} as ProjectDescriptor);
+            expect(result).toBe(path.join('tests', 'e2e', 'test_foo.py'));
+        });
+
+        it('returns generic test path if unknown test type (edge case)', () => {
+            // @ts-expect-error testType not one of expected
+            const result = adapter.getTestFilePath(sourceFile, 'other', {} as ProjectDescriptor);
+            expect(result).toBe(path.join('tests', 'test_foo.py'));
+        });
     });
-  });
+
+    describe('getTestDirectory', () => {
+        it('returns correct test directory for unit', () => {
+            expect(adapter.getTestDirectory({} as ProjectDescriptor, 'unit')).toBe(path.join('tests', 'unit'));
+        });
+        it('returns correct test directory for integration', () => {
+            expect(adapter.getTestDirectory({} as ProjectDescriptor, 'integration')).toBe(path.join('tests', 'integration'));
+        });
+        it('returns correct test directory for e2e', () => {
+            expect(adapter.getTestDirectory({} as ProjectDescriptor, 'e2e')).toBe(path.join('tests', 'e2e'));
+        });
+    });
+
+    describe('getTestFilePattern', () => {
+        it('always returns the simple python test filename pattern', () => {
+            expect(adapter.getTestFilePattern('unit')).toBe('**/test_*.py');
+            expect(adapter.getTestFilePattern('integration')).toBe('**/test_*.py');
+            expect(adapter.getTestFilePattern('e2e')).toBe('**/test_*.py');
+        });
+    });
+
+    describe('parseCoverage', () => {
+        const projectPath = '/my/project';
+
+        it('parses coverage JSON and returns CoverageReport correctly', async () => {
+            const coverageJson = JSON.stringify({
+                files: {
+                    'src/file1.py': {
+                        summary: { num_statements: 10, covered_lines: 8, percent_covered: 80 },
+                        missing_lines: [1, 2, 3],
+                    },
+                    'src/file2.py': {
+                        summary: { num_statements: 20, covered_lines: 15, percent_covered: 75 },
+                        missing_lines: [4],
+                    },
+                },
+            });
+            mockReadFile.mockResolvedValueOnce(coverageJson);
+
+            const result = await adapter.parseCoverage('', projectPath);
+
+            expect(mockReadFile).toHaveBeenCalledWith(path.join(projectPath, 'coverage.json'));
+            expect(result.files).toHaveLength(2);
+            expect(result.overall.lines.total).toBe(30);
+            expect(result.overall.lines.covered).toBe(23);
+            expect(result.overall.lines.percentage).toBeCloseTo((23 / 30) * 100);
+            expect(result.overall.functions.total).toBe(0);
+            expect(result.overall.functions.covered).toBe(0);
+            expect(result.overall.functions.percentage).toBe(0);
+            expect(result.overall.branches.total).toBe(0);
+            expect(result.overall.branches.covered).toBe(0);
+            expect(result.overall.branches.percentage).toBe(0);
+
+            const file1 = result.files.find(f => f.path === 'src/file1.py');
+            expect(file1).toBeDefined();
+            expect(file1?.lines.total).toBe(10);
+            expect(file1?.lines.covered).toBe(8);
+            expect(file1?.lines.percentage).toBe(80);
+            expect(file1?.uncoveredLines).toEqual([1, 2, 3]);
+
+            // Functions and branches always zero as per current code
+            expect(file1?.functions.total).toBe(0);
+            expect(file1?.branches.total).toBe(0);
+
+            // Timestamp is ISO string
+            expect(new Date(result.timestamp).toString()).not.toBe('Invalid Date');
+        });
+
+        it('handles empty coverage data gracefully', async () => {
+            mockReadFile.mockResolvedValueOnce(JSON.stringify({ files: {} }));
+
+            const result = await adapter.parseCoverage('', projectPath);
+
+            expect(result.files).toHaveLength(0);
+            expect(result.overall.lines.total).toBe(0);
+            expect(result.overall.lines.covered).toBe(0);
+            expect(result.overall.lines.percentage).toBe(0);
+        });
+
+        it('throws error when readFile rejects', async () => {
+            mockReadFile.mockRejectedValueOnce(new Error('file not found'));
+
+            await expect(adapter.parseCoverage('', projectPath))
+                .rejects
+                .toThrow(/Failed to parse coverage: Error: file not found/);
+        });
+
+        it('throws error when JSON parsing fails', async () => {
+            mockReadFile.mockResolvedValueOnce('not a json');
+
+            await expect(adapter.parseCoverage('', projectPath)).rejects.toThrow(/Failed to parse coverage: SyntaxError/);
+        });
+    });
 });

@@ -1,7 +1,7 @@
-import { EnvironmentHealer } from './EnvironmentHealer.js';
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { fileExists } from '../utils/fileUtils.js';
-import logger from '../utils/logger.js';
+import { EnvironmentHealer } from './EnvironmentHealer';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { fileExists } from '../utils/fileUtils';
+import logger from '../utils/logger';
 import path from 'path';
 
 /**

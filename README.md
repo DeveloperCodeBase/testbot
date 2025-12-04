@@ -5,12 +5,13 @@ An autonomous test bot that analyzes repositories, generates comprehensive tests
 ## Features
 
 - 🤖 **Fully Autonomous**: No human intervention required during execution
+- 💰 **Cost-Optimized**: Intelligent multi-model routing keeps costs <$0.20/run
 - 🌐 **Multi-Language Support**: Node.js/TypeScript, Python, Java (with .NET, Go, PHP coming soon)
 - 🧪 **Comprehensive Testing**: Generates unit, integration, and E2E tests
 - 📊 **Coverage-Driven**: Iteratively improves tests based on coverage analysis
 - 🔄 **Self-Healing**: Automatically fixes failing tests using AI
 - 🎯 **Framework Detection**: Automatically detects and adapts to your tech stack
-- 📝 **Rich Reports**: JSON and HTML reports with detailed metrics
+- 📝 **Rich Reports**: JSON and HTML reports with detailed metrics and LLM usage stats
 
 ## Quick Start
 
@@ -43,25 +44,80 @@ enabled_tests:
 
 coverage:
   threshold: 80
+  max_refinement_iterations: 3
 
 llm:
-  provider: "openai"
-  model: "gpt-4"
-  # Set OPENAI_API_KEY environment variable
+  provider: "openrouter"
+  mode: "balanced"  # balanced | cheap | premium
+  models:
+    planner: "nousresearch/hermes-3-llama-3.1-405b"
+    coder: "google/gemini-2.0-flash-exp:free"
+    long_context: "google/gemini-2.0-flash-exp:free"
+    helper: "meta-llama/llama-3.2-3b-instruct:free"
+  max_tokens_per_run: 1000000
 ```
 
-## LLM Configuration (OpenRouter)
+## LLM Configuration (Cost-Optimized Multi-Model Strategy)
 
-This project uses OpenRouter as the LLM provider.
+This project uses OpenRouter with an intelligent **balanced multi-model strategy** to minimize costs while maintaining high-quality test generation.
 
-1. Sign up at https://openrouter.ai and get your API key.
-2. Create a `.env` file in the root of the project:
-   ```env
-   OPENROUTER_API_KEY=your_api_key_here
-   OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-   OPENROUTER_MODEL=openai/gpt-4.1-mini
-   OPENROUTER_APP_NAME=ai-testbot
-   ```
+### 🎯 Balanced Mode (Recommended)
+
+The testbot automatically routes tasks to appropriate models:
+
+- **Planning & Strategy** → Hermes 405B (strong reasoning)
+- **Code Generation** → Gemini Flash (fast, capable, **FREE!**)
+- **Test Healing** → Gemini Flash (fast, capable, **FREE!**)
+- **Analysis & Transforms** → Llama 3.2 3B (quick, **FREE!**)
+- **Long Context (>100k tokens)** → Auto-detected, uses appropriate model
+
+**Cost Profile:**
+- 90%+ of operations use **free models**
+- Only complex planning uses premium models
+- **Estimated cost: <$0.20 per run** (vs $2-5 with GPT-4 only)
+
+### Setup
+
+1. **Sign up at https://openrouter.ai** and get your API key
+2. **Create a `.env` file** in the project root:
+
+```env
+# Required
+OPENROUTER_API_KEY=your_api_key_here
+
+# Balanced Mode (default, recommended)
+LLM_MODE=balanced
+LLM_MODEL_PLANNER=nousresearch/hermes-3-llama-3.1-405b
+LLM_MODEL_CODER=google/gemini-2.0-flash-exp:free
+LLM_MODEL_LONG_CONTEXT=google/gemini-2.0-flash-exp:free
+LLM_MODEL_HELPER=meta-llama/llama-3.2-3b-instruct:free
+
+# Token Budget
+LLM_MAX_TOKENS_PER_RUN=1000000
+LLM_TOKEN_WARN_THRESHOLD=0.8
+```
+
+### Alternative Modes
+
+**Cheap Mode** (all free):
+```env
+LLM_MODE=cheap
+OPENROUTER_MODEL=meta-llama/llama-3.2-3b-instruct:free
+```
+
+**Premium Mode** (maximum quality):
+```env
+LLM_MODE=premium
+OPENROUTER_MODEL=openai/gpt-4o
+```
+
+### Usage Monitoring
+
+Every HTML report includes a **🤖 LLM Usage Statistics** section showing:
+- Total tokens used
+- Model-by-model breakdown with call counts
+- Task-type breakdown (generate, heal, plan, analyze)
+- Cost implications
 
 ## Architecture
 
@@ -114,9 +170,21 @@ Options:
 ## Environment Variables
 
 ```bash
-OPENAI_API_KEY=your-api-key-here
-ANTHROPIC_API_KEY=your-api-key-here
-GOOGLE_API_KEY=your-api-key-here
+# OpenRouter (required)
+OPENROUTER_API_KEY=your-api-key-here
+
+# LLM Mode Configuration
+LLM_MODE=balanced  # balanced | cheap | premium
+
+# Task-Specific Models (for balanced mode)
+LLM_MODEL_PLANNER=nousresearch/hermes-3-llama-3.1-405b
+LLM_MODEL_CODER=google/gemini-2.0-flash-exp:free
+LLM_MODEL_LONG_CONTEXT=google/gemini-2.0-flash-exp:free
+LLM_MODEL_HELPER=meta-llama/llama-3.2-3b-instruct:free
+
+# Token Budget
+LLM_MAX_TOKENS_PER_RUN=1000000
+LLM_TOKEN_WARN_THRESHOLD=0.8
 ```
 
 ## Output
@@ -124,7 +192,9 @@ GOOGLE_API_KEY=your-api-key-here
 The bot generates:
 
 - **JSON Report**: Machine-readable results at `<output>/results.json`
+  - Includes `llmUsage` field with token counts and model breakdown
 - **HTML Report**: Visual report at `<output>/results.html`
+  - Includes interactive LLM Usage Statistics section
 - **Coverage Data**: Per-project coverage reports
 - **Test Files**: Generated tests in your repository
 - **Logs**: Detailed execution logs

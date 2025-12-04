@@ -1,8 +1,8 @@
 import path from 'path';
-import { EnvironmentHealer } from './EnvironmentHealer.js';
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { fileExists, readFile, writeFile } from '../utils/fileUtils.js';
-import logger from '../utils/logger.js';
+import { EnvironmentHealer } from './EnvironmentHealer';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { fileExists, readFile, writeFile } from '../utils/fileUtils';
+import logger from '../utils/logger';
 
 /**
  * Healer for Node.js / TypeScript environments
@@ -626,17 +626,17 @@ module.exports = {
         logger.info(`Fixing internal module path: ${modulePath}`);
 
         try {
-            // Find all test files in the project
-            const { findFiles } = await import('../utils/fileUtils.js');
-            const testFiles = await findFiles(projectPath, '**/*.{test,spec}.{ts,tsx,js,jsx}', {
-                ignore: ['**/node_modules/**', '**/dist/**', '**/build/**']
+            // Find ALL TypeScript files (source + test), not just test files
+            const { findFiles } = await import('../utils/fileUtils');
+            const allTsFiles = await findFiles(projectPath, '**/*.{ts,tsx}', {
+                ignore: ['**/node_modules/**', '**/dist/**', '**/build/**', '**/*.d.ts']
             });
 
             let fixedCount = 0;
             const pathToFix = modulePath.replace(/\\/g, '/'); // Normalize path separators
 
-            for (const testFile of testFiles) {
-                const content = await readFile(testFile);
+            for (const file of allTsFiles) {
+                const content = await readFile(file);
 
                 // Check if this file imports the problematic module
                 if (!content.includes(pathToFix)) continue;
@@ -648,13 +648,13 @@ module.exports = {
                 );
 
                 if (fixedContent !== content) {
-                    await writeFile(testFile, fixedContent);
+                    await writeFile(file, fixedContent);
 
                     this.actions.push({
                         project: path.basename(projectPath),
-                        path: testFile,
+                        path: file,
                         command: 'fix-internal-module',
-                        description: `Fixed import '${modulePath}' → '${modulePath.replace(/\.js$/, '')}' in ${path.basename(testFile)}`,
+                        description: `Fixed import '${modulePath}' → '${modulePath.replace(/\.js$/, '')}' in ${path.basename(file)}`,
                         success: true,
                         timestamp: new Date().toISOString()
                     });
@@ -664,7 +664,17 @@ module.exports = {
             }
 
             if (fixedCount > 0) {
-                logger.info(`✓ Fixed ${fixedCount} test file(s) with internal module path issues`);
+                // Create a summary action for all fixes
+                this.actions.push({
+                    project: path.basename(projectPath),
+                    path: projectPath,
+                    command: 'fix-internal-module-paths',
+                    description: `Fixed ${fixedCount} file(s) (source + test) by removing .js extensions from internal imports (e.g., '${modulePath}' → '${modulePath.replace(/\.js$/, '')}')`,
+                    success: true,
+                    timestamp: new Date().toISOString()
+                });
+
+                logger.info(`✓ Fixed ${fixedCount} file(s) with internal module path issues`);
                 return true;
             }
         } catch (error) {
@@ -684,14 +694,14 @@ module.exports = {
 
         try {
             // First, install the package itself
-            const { execAsync } = await import('../utils/execUtils.js');
+            const { execAsync } = await import('../utils/execUtils');
             await execAsync(`npm install ${packageName}`, { cwd: projectPath });
 
             this.actions.push({
                 project: path.basename(projectPath),
                 path: projectPath,
                 command: `npm install ${packageName}`,
-                description: `Installed missing package: ${packageName}`,
+                description: `Auto-installed missing package: ${packageName}`,
                 success: true,
                 timestamp: new Date().toISOString()
             });
@@ -700,6 +710,8 @@ module.exports = {
             const hasTypes = await this.tryInstallTypes(packageName, projectPath);
             if (hasTypes) {
                 logger.info(`✓ Also installed @types/${packageName}`);
+            } else {
+                logger.info(`✓ Installed ${packageName} (no @types available)`);
             }
 
             return true;
@@ -709,7 +721,7 @@ module.exports = {
                 project: path.basename(projectPath),
                 path: projectPath,
                 command: `npm install ${packageName}`,
-                description: `Failed to install ${packageName}`,
+                description: `Failed to install ${packageName}: ${error}`,
                 success: false,
                 timestamp: new Date().toISOString()
             });
@@ -726,7 +738,7 @@ module.exports = {
     ): Promise<boolean> {
         const typesPackage = `@types/${packageName}`;
         try {
-            const { execAsync } = await import('../utils/execUtils.js');
+            const { execAsync } = await import('../utils/execUtils');
             await execAsync(`npm install -D ${typesPackage}`, { cwd: projectPath });
 
             this.actions.push({
@@ -756,7 +768,7 @@ module.exports = {
 
         try {
             // Use filesystem walk instead of parsing stderr
-            const { findFiles } = await import('../utils/fileUtils.js');
+            const { findFiles } = await import('../utils/fileUtils');
             const testFiles = await findFiles(projectPath, '**/*.{test,spec,integration,e2e}.{ts,tsx}', {
                 ignore: ['**/node_modules/**', '**/dist/**', '**/build/**']
             });

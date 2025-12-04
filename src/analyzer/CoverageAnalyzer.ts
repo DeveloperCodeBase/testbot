@@ -1,9 +1,9 @@
 import path from 'path';
 import { parseStringPromise } from 'xml2js';
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { CoverageReport, FileCoverage, CoverageMetrics } from '../models/CoverageModels.js';
-import logger from '../utils/logger.js';
-import { fileExists, readFile } from '../utils/fileUtils.js';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { CoverageReport, FileCoverage, CoverageMetrics } from '../models/CoverageModels';
+import logger from '../utils/logger';
+import { fileExists, readFile } from '../utils/fileUtils';
 
 export class CoverageAnalyzer {
 
@@ -303,7 +303,7 @@ export class CoverageAnalyzer {
             total,
             covered,
             skipped: total - covered,
-            pct: total > 0 ? (covered / total) * 100 : 100
+            pct: total > 0 ? (covered / total) * 100 : 0
         };
     }
 }

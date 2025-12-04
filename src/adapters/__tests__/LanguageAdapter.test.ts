@@ -1,7 +1,7 @@
 // @ts-nocheck
-import type { LanguageAdapter } from '../LanguageAdapter.js';
-import type { ProjectDescriptor } from '../../models/ProjectDescriptor.js';
-import type { CoverageReport } from '../../models/CoverageReport.js';
+import type { LanguageAdapter } from '../LanguageAdapter';
+import type { ProjectDescriptor } from '../../models/ProjectDescriptor';
+import type { CoverageReport } from '../../models/CoverageReport';
 
 describe('LanguageAdapter interface', () => {
   // This is an interface, so we can't test implementations directly here.

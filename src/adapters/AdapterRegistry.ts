@@ -1,11 +1,11 @@
-import { LanguageAdapter } from './LanguageAdapter.js';
-import { NodeAdapter } from './NodeAdapter.js';
-import { PythonAdapter } from './PythonAdapter.js';
-import { JavaAdapter } from './JavaAdapter.js';
-import { CSharpAdapter } from './CSharpAdapter.js';
-import { GoAdapter } from './GoAdapter.js';
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import logger from '../utils/logger.js';
+import { LanguageAdapter } from './LanguageAdapter';
+import { NodeAdapter } from './NodeAdapter';
+import { PythonAdapter } from './PythonAdapter';
+import { JavaAdapter } from './JavaAdapter';
+import { CSharpAdapter } from './CSharpAdapter';
+import { GoAdapter } from './GoAdapter';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import logger from '../utils/logger';
 
 /**
  * Registry for all language adapters

@@ -1,10 +1,10 @@
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { EnvironmentHealer } from '../env/EnvironmentHealer.js';
-import { NodeEnvironmentHealer } from '../env/NodeEnvironmentHealer.js';
-import { EnvironmentIssue, AutoFixAction } from '../models/EnvironmentModels.js';
-import { SyntaxValidator, ValidationResult } from '../validator/SyntaxValidator.js';
-import { execAsync } from '../utils/execUtils.js';
-import logger from '../utils/logger.js';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { EnvironmentHealer } from '../env/EnvironmentHealer';
+import { NodeEnvironmentHealer } from '../env/NodeEnvironmentHealer';
+import { EnvironmentIssue, AutoFixAction } from '../models/EnvironmentModels';
+import { SyntaxValidator, ValidationResult } from '../validator/SyntaxValidator';
+import { execAsync } from '../utils/execUtils';
+import logger from '../utils/logger';
 
 /**
  * Implements iterative auto-fix healing loop for Jest
@@ -26,7 +26,8 @@ export class JestAutoFixLoop {
         project: ProjectDescriptor,
         projectPath: string,
         healer: EnvironmentHealer,
-        generatedFiles: string[]
+        generatedFiles: string[],
+        command?: string
     ): Promise<{
         success: boolean;
         attempts: number;
@@ -65,7 +66,11 @@ export class JestAutoFixLoop {
             // Step 2: Try to run Jest
             try {
                 logger.info('🧪 Attempting to run Jest...');
-                const { stdout, stderr } = await execAsync(`cd "${projectPath}" && npm test`, {
+                const cmd = command || `cd "${projectPath}" && npm test`;
+                // Ensure we are in the project path if command doesn't handle it
+                const finalCmd = cmd.includes(`cd "${projectPath}"`) ? cmd : `cd "${projectPath}" && ${cmd}`;
+
+                const { stdout, stderr } = await execAsync(finalCmd, {
                     timeout: 60000
                 });
 
@@ -143,9 +148,39 @@ export class JestAutoFixLoop {
     }
 
     /**
+     * Detect if test failures are due to unreachable service
+     */
+    private detectServiceUnavailability(output: string): { detected: boolean; url?: string; port?: number } {
+        // Pattern: ECONNREFUSED 127.0.0.1:3000 or connect ECONNREFUSED
+        const connRefusedMatch = output.match(/ECONNREFUSED\s+([\d.]+):(\d+)|connect ECONNREFUSED/i);
+
+        // Also check for common patterns like "GET http://localhost:3000/health"
+        const urlMatch = output.match(/(?:GET|POST|PUT|DELETE)\s+(https?:\/\/[^\/\s]+)/i);
+
+        if (connRefusedMatch || (urlMatch && output.includes('ECONNREFUSED'))) {
+            const port = connRefusedMatch ? parseInt(connRefusedMatch[2]) : 3000;
+            const host = connRefusedMatch ? connRefusedMatch[1] : 'localhost';
+            const url = urlMatch ? urlMatch[1] : `http://${host}:${port}`;
+
+            return {
+                detected: true,
+                url,
+                port
+            };
+        }
+
+        return { detected: false };
+    }
+
+    /**
      * Analyze Jest error to determine issue type
      */
     private analyzeJestError(output: string): string {
+        // Check for service unavailability FIRST (before other checks)
+        if (this.detectServiceUnavailability(output).detected) {
+            return 'SERVICE_UNAVAILABLE';
+        }
+
         if (output.match(/No tests found/i)) return 'NO_TESTS_FOUND';
         if (output.match(/Cannot find module.*ts-jest/i)) return 'MISSING_TS_JEST';
         if (output.match(/Unexpected token/i)) return 'SYNTAX_ERROR';
@@ -199,6 +234,9 @@ export class JestAutoFixLoop {
 
             case 'VITEST_MOCK_ERROR':
                 return await this.fixVitestMocking(project, projectPath, healer, errorOutput);
+
+            case 'SERVICE_UNAVAILABLE':
+                return await this.fixServiceUnavailability(project, projectPath, healer, errorOutput);
 
             case 'SYNTAX_ERROR':
                 // Syntax errors should be caught earlier, but handle if they slip through
@@ -291,6 +329,36 @@ export class JestAutoFixLoop {
         // Mark as a blocker
         return false;
     }
+
+    /**
+     * Handle service unavailability errors
+     */
+    private async fixServiceUnavailability(
+        project: ProjectDescriptor,
+        _projectPath: string,
+        healer: EnvironmentHealer,
+        errorOutput: string
+    ): Promise<boolean> {
+        const detection = this.detectServiceUnavailability(errorOutput);
+
+        logger.warn(`Service unavailable detected: ${detection.url}`);
+
+        healer.addIssue(
+            project.name,
+            'execution',
+            'error',
+            'SERVICE_UNAVAILABLE',
+            `Target service not reachable at ${detection.url}`,
+            `Integration/E2E tests require a running service. Detected connection refused errors for ${detection.url}. Start the service before running tests, or configure the bot with appropriate service startup commands.`
+        );
+
+        // Cannot auto-fix service unavailability, return false
+        return false;
+    }
+
+    /**
+     * Attempt to fix Vitest VI mocking errors
+     */
     private async fixVitestMocking(
         project: ProjectDescriptor,
         projectPath: string,
@@ -339,8 +407,19 @@ export class JestAutoFixLoop {
             // Internal module - likely .js vs .ts mismatch
             return await this.fixInternalModule(project, projectPath, healer, errorOutput, modulePath);
         } else {
+            // External package - check if it's a Node.js builtin first
+            const builtins = ['fs', 'path', 'http', 'https', 'crypto', 'util', 'events', 'stream',
+                'os', 'url', 'querystring', 'Buffer', 'process', 'timers', 'dns'];
+
+            const packageName = modulePath.startsWith('@') ? modulePath : modulePath.split('/')[0];
+
+            if (builtins.includes(packageName)) {
+                logger.info(`${packageName} is a Node.js built-in module, not installing`);
+                return false;
+            }
+
             // External package
-            return await this.fixExternalPackage(project, projectPath, healer, modulePath);
+            return await this.fixExternalPackage(project, projectPath, healer, packageName);
         }
     }
 
@@ -359,13 +438,14 @@ export class JestAutoFixLoop {
             if (fixed) {
                 logger.info(`✓ Fixed internal module import: ${modulePath}`);
                 // Add issue for reporting (severity: info because it was auto-fixed)
+                const fixedPath = modulePath.replace(/\.js$/, '');
                 healer.addIssue(
                     project.name,
                     'execution',
                     'info',
                     'JEST_INTERNAL_MODULE_MISMATCH',
-                    `Auto-fixed import path: ${modulePath}`,
-                    `Removed .js extension from internal imports to allow ts-jest resolution`
+                    `Auto-fixed internal module import with .js extension`,
+                    `Changed import from '${modulePath}' to '${fixedPath}' to allow ts-jest resolution of TypeScript modules`
                 );
                 return true;
             }
@@ -375,9 +455,9 @@ export class JestAutoFixLoop {
             project.name,
             'execution',
             'error',
-            'JEST_MISSING_INTERNAL_MODULE',
-            `Test imports '${modulePath}' but file not found`,
-            `Check if the path is correct or if .js extension should be removed for TypeScript`
+            'JEST_INTERNAL_MODULE_MISMATCH',
+            `Test imports '${modulePath}' but corresponding file not found`,
+            `Check if the path is correct. For TypeScript projects, import paths should not include .js extensions.`
         );
 
         return false;
@@ -403,7 +483,7 @@ export class JestAutoFixLoop {
                     'info',
                     'JEST_MISSING_NPM_PACKAGE',
                     `Auto-installed missing package: ${packageName}`,
-                    `Installed ${packageName} and @types/${packageName} (if available)`
+                    `Installed ${packageName} and attempted to install @types/${packageName} for TypeScript support`
                 );
                 return true;
             }
@@ -413,9 +493,9 @@ export class JestAutoFixLoop {
             project.name,
             'execution',
             'error',
-            'JEST_MISSING_PACKAGE',
+            'JEST_MISSING_NPM_PACKAGE',
             `Missing package: ${packageName}`,
-            `Install via: npm install ${packageName}`
+            `Install manually via: npm install ${packageName}`
         );
 
         return false;

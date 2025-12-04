@@ -1,6 +1,6 @@
-import { JobResult } from '../models/TestRunResult.js';
-import { writeFile } from '../utils/fileUtils.js';
-import logger from '../utils/logger.js';
+import { JobResult } from '../models/TestRunResult';
+import { writeFile } from '../utils/fileUtils';
+import logger from '../utils/logger';
 import path from 'path';
 
 /**
@@ -295,8 +295,74 @@ export class ReportGenerator {
             <strong>Ended:</strong> ${new Date(result.endTime).toLocaleString()}<br>
             ${result.repoUrl ? `<strong>Repository:</strong> ${result.repoUrl}<br>` : ''}
             <strong>Generated Test Files:</strong> ${result.generatedTestFiles.length}
-            <strong>Generated Test Files:</strong> ${result.generatedTestFiles.length}
         </div>
+
+        ${result.llmUsage ? `
+        <div class="env-section">
+            <h2>🤖 LLM Usage Statistics</h2>
+            
+            <div class="summary">
+                <div class="summary-card">
+                    <h3>Total Tokens</h3>
+                    <div class="value">${result.llmUsage.totalTokensEstimated.toLocaleString()}</div>
+                </div>
+                <div class="summary-card">
+                    <h3>Model Calls</h3>
+                    <div class="value">${Object.values(result.llmUsage.modelUsage).reduce((sum, m) => sum + m.callCount, 0)}</div>
+                </div>
+                <div class="summary-card">
+                    <h3>Unique Models</h3>
+                    <div class="value">${Object.keys(result.llmUsage.modelUsage).length}</div>
+                </div>
+            </div>
+
+            <h3 style="margin-top: 20px;">Model Usage Breakdown</h3>
+            <table class="auto-fix-table">
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>Calls</th>
+                        <th>Estimated Tokens</th>
+                        <th>Percentage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${Object.entries(result.llmUsage.modelUsage)
+                    .sort(([, a], [, b]) => b.tokensEstimated - a.tokensEstimated)
+                    .map(([model, usage]) => `
+                    <tr>
+                        <td><code>${model}</code></td>
+                        <td>${usage.callCount}</td>
+                        <td>${usage.tokensEstimated.toLocaleString()}</td>
+                        <td>${((usage.tokensEstimated / result.llmUsage!.totalTokensEstimated) * 100).toFixed(1)}%</td>
+                    </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+
+            <h3 style="margin-top: 20px;">Task Breakdown</h3>
+            <table class="auto-fix-table">
+                <thead>
+                    <tr>
+                        <th>Task Type</th>
+                        <th>Estimated Tokens</th>
+                        <th>Percentage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${Object.entries(result.llmUsage.taskBreakdown)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([task, tokens]) => `
+                    <tr>
+                        <td><strong>${task}</strong></td>
+                        <td>${tokens.toLocaleString()}</td>
+                        <td>${((tokens / result.llmUsage!.totalTokensEstimated) * 100).toFixed(1)}%</td>
+                    </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+        ` : ''}
 
         ${(result.autoFixActions && result.autoFixActions.length > 0) || (result.environmentIssues && result.environmentIssues.length > 0) ? `
         <div class="env-section">

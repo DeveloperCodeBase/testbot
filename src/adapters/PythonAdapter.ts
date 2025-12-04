@@ -1,8 +1,8 @@
 import path from 'path';
-import { LanguageAdapter } from './LanguageAdapter.js';
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { CoverageReport, FileCoverage, CoverageSummary } from '../models/CoverageReport.js';
-import { readFile } from '../utils/fileUtils.js';
+import { LanguageAdapter } from './LanguageAdapter';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { CoverageReport, FileCoverage, CoverageSummary } from '../models/CoverageReport';
+import { readFile } from '../utils/fileUtils';
 
 /**
  * Language adapter for Python projects
@@ -15,7 +15,10 @@ export class PythonAdapter implements LanguageAdapter {
     }
 
     getTestFramework(project: ProjectDescriptor): string {
-        return project.testFramework || 'pytest';
+        if (project.testFramework !== undefined) {
+            return project.testFramework;
+        }
+        return 'pytest';
     }
 
     getBuildCommand(_project: ProjectDescriptor): string | null {

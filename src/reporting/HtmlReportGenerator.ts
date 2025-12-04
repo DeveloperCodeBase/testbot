@@ -1,7 +1,7 @@
-import { JobResult, TestRunResult } from '../models/TestRunResult.js';
-import { writeFile } from '../utils/fileUtils.js';
+import { JobResult, TestRunResult } from '../models/TestRunResult';
+import { writeFile } from '../utils/fileUtils';
 import path from 'path';
-import logger from '../utils/logger.js';
+import logger from '../utils/logger';
 
 /**
  * Generates HTML reports for test execution results

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import axios from 'axios';
-import { OpenRouterClient } from './OpenRouterClient.js';
-import { LLMMessage } from '../models/LLMMessage.js';
+import { OpenRouterClient } from './OpenRouterClient';
+import { LLMMessage } from '../models/LLMMessage';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;

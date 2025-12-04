@@ -1,8 +1,8 @@
-import { EnvironmentHealer } from './EnvironmentHealer.js';
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { readFile } from '../utils/fileUtils.js';
-import { execAsync } from '../utils/execUtils.js';
-import logger from '../utils/logger.js';
+import { EnvironmentHealer } from './EnvironmentHealer';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { readFile } from '../utils/fileUtils';
+import { execAsync } from '../utils/execUtils';
+import logger from '../utils/logger';
 import path from 'path';
 
 /**

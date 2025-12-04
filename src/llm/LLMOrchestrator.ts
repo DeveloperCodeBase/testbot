@@ -1,7 +1,22 @@
 import axios from 'axios';
-import logger from '../utils/logger.js';
-import { BotConfig } from '../config/schema.js';
-import { OpenRouterClient } from './OpenRouterClient.js';
+import logger from '../utils/logger';
+import { BotConfig } from '../config/schema';
+import { OpenRouterClient } from './OpenRouterClient';
+
+export type LLMTask = 'plan' | 'generate' | 'heal' | 'analyze' | 'transform';
+
+export interface LLMCallOptions {
+    temperature?: number;
+    maxTokens?: number;
+    forceModel?: string;
+}
+
+export interface LLMUsageStats {
+    model: string;
+    task: LLMTask;
+    tokensEstimated: number;
+    timestamp: string;
+}
 
 export interface LLMRequest {
     role: 'unit' | 'integration' | 'e2e' | 'fix';
@@ -26,10 +41,129 @@ export interface LLMResponse {
 export class LLMOrchestrator {
     private config: BotConfig['llm'];
     private openRouterClient: OpenRouterClient;
+    private usageStats: LLMUsageStats[] = [];
+    private totalTokensUsed: number = 0;
 
     constructor(config: BotConfig['llm']) {
         this.config = config;
         this.openRouterClient = new OpenRouterClient();
+    }
+
+    /**
+     * Call LLM with task-based model routing
+     */
+    async callLLMWithRouting(task: LLMTask, prompt: string, options?: LLMCallOptions): Promise<string> {
+        // 1. Select model based on task and mode
+        const model = this.selectModel(task, prompt, options);
+
+        // 2. Estimate tokens
+        const estimatedTokens = this.estimateTokens(prompt);
+
+        // 3. Check token budget
+        if (!this.checkTokenBudget(estimatedTokens)) {
+            const msg = `Token budget exceeded: ${this.totalTokensUsed + estimatedTokens} > ${this.config.max_tokens_per_run}`;
+            logger.warn(msg);
+            throw new Error(msg);
+        }
+
+        // 4. Make the call
+        try {
+            const result = await this.callOpenRouter(prompt, model);
+            this.recordUsage(model, task, estimatedTokens);
+            return result;
+        } catch (error) {
+            logger.error(`LLM call failed for task ${task} using model ${model}: ${error}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Select model based on task type and context
+     */
+    private selectModel(task: LLMTask, prompt: string, options?: LLMCallOptions): string {
+        if (options?.forceModel) {
+            return options.forceModel;
+        }
+
+        const mode = this.config.mode || 'balanced';
+        const models = this.config.models;
+
+        // If not in balanced mode, use default model
+        if (mode !== 'balanced' || !models) {
+            return this.config.model;
+        }
+
+        const estimatedTokens = this.estimateTokens(prompt);
+
+        // Long context detection
+        if (estimatedTokens > 100000 && models.long_context) {
+            logger.info(`Using long-context model for ${estimatedTokens} tokens`);
+            return models.long_context;
+        }
+
+        // Task-based routing
+        switch (task) {
+            case 'plan':
+                return models.planner || this.config.model;
+            case 'generate':
+            case 'heal':
+                return models.coder || this.config.model;
+            case 'analyze':
+            case 'transform':
+                return models.helper || this.config.model;
+            default:
+                return this.config.model;
+        }
+    }
+
+    /**
+     * Estimate token count for a prompt
+     */
+    private estimateTokens(prompt: string): number {
+        // Rough estimation: ~4 chars per token for English text
+        return Math.ceil(prompt.length / 4);
+    }
+
+    /**
+     * Check if we're within token budget
+     */
+    private checkTokenBudget(estimatedTokens: number): boolean {
+        const maxTokens = this.config.max_tokens_per_run || Infinity;
+        const threshold = this.config.token_budget_warn_threshold || 0.8;
+
+        if (this.totalTokensUsed + estimatedTokens > maxTokens * threshold) {
+            logger.warn(`Approaching token budget: ${this.totalTokensUsed + estimatedTokens}/${maxTokens} (${Math.round(((this.totalTokensUsed + estimatedTokens) / maxTokens) * 100)}%)`);
+        }
+
+        return this.totalTokensUsed + estimatedTokens <= maxTokens;
+    }
+
+    /**
+     * Record usage statistics
+     */
+    private recordUsage(model: string, task: LLMTask, tokensEstimated: number): void {
+        this.usageStats.push({
+            model,
+            task,
+            tokensEstimated,
+            timestamp: new Date().toISOString(),
+        });
+        this.totalTokensUsed += tokensEstimated;
+        logger.debug(`LLM usage: ${task} with ${model}, ~${tokensEstimated} tokens (total: ${this.totalTokensUsed})`);
+    }
+
+    /**
+     * Get usage statistics
+     */
+    getUsageStats(): LLMUsageStats[] {
+        return this.usageStats;
+    }
+
+    /**
+     * Get total tokens used
+     */
+    getTotalTokensUsed(): number {
+        return this.totalTokensUsed;
     }
 
     /**
@@ -41,7 +175,7 @@ export class LLMOrchestrator {
         logger.info(`Generating ${request.role} tests for ${request.language} project`);
 
         try {
-            const response = await this.callLLM(prompt);
+            const response = await this.callLLMWithRouting('generate', prompt);
             const generatedFiles = this.parseResponse(response);
 
             return { generatedFiles };
@@ -64,7 +198,7 @@ export class LLMOrchestrator {
         logger.info(`Fixing failing tests for ${request.language} project`);
 
         try {
-            const response = await this.callLLM(prompt);
+            const response = await this.callLLMWithRouting('heal', prompt);
             const generatedFiles = this.parseResponse(response);
 
             return { generatedFiles };
@@ -179,8 +313,10 @@ Return ONLY the fixed test code in the same format as the original, with the fil
     }
 
     /**
-     * Call LLM API
+     * Call LLM API (legacy method, prefer callLLMWithRouting)
+     * @deprecated Use callLLMWithRouting for task-based model routing
      */
+    // @ts-expect-error - kept for backward compatibility
     private async callLLM(prompt: string): Promise<string> {
         const { provider, model, api_key } = this.config;
 

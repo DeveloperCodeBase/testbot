@@ -1,8 +1,8 @@
 import path from 'path';
-import { LanguageAdapter } from './LanguageAdapter.js';
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { CoverageReport, FileCoverage, CoverageSummary } from '../models/CoverageReport.js';
-import { readFile } from '../utils/fileUtils.js';
+import { LanguageAdapter } from './LanguageAdapter';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { CoverageReport, FileCoverage, CoverageSummary } from '../models/CoverageReport';
+import { readFile } from '../utils/fileUtils';
 
 /**
  * Language adapter for Node.js/TypeScript projects
@@ -29,11 +29,11 @@ export class NodeAdapter implements LanguageAdapter {
         const pm = this.getPackageManager(project);
         const framework = this.getTestFramework(project);
 
-        if (framework === 'react') {
-            // For React, we assume Vitest + React Testing Library
-            // User requested specific scripts or explicit commands
+        // Check project.framework (not testFramework) for React
+        if (project.framework === 'react') {
+            // For React, use npm run scripts
             if (testType === 'unit') {
-                return `${pm} run test:unit`; // Assuming script exists as per requirement, or fallback to vitest
+                return `${pm} run test:unit`;
             } else if (testType === 'integration') {
                 return `${pm} run test:integration`;
             } else if (testType === 'e2e') {
@@ -57,7 +57,7 @@ export class NodeAdapter implements LanguageAdapter {
             } else if (testType === 'e2e') {
                 return `${pm} test -- --grep e2e`;
             }
-        } else if (framework === 'vitest' || framework === 'react') {
+        } else if (framework === 'vitest') {
             // Use npx vitest run to avoid needing package.json scripts
             // We can also use npm test if we are sure, but npx vitest is safer for auto-fix context
             // actually, let's try npm test first if it exists, but here we return the command string.
@@ -106,7 +106,9 @@ export class NodeAdapter implements LanguageAdapter {
             return path.join('tests', 'e2e', `${baseName}.e2e.test${ext}`);
         }
 
-        return `${sourceFile}.test${ext}`;
+        // Fallback for unknown test type
+        const reactExt = _project.framework === 'react' ? `${ext}x` : ext;
+        return `${baseName}.test${reactExt}`;
     }
 
     getTestDirectory(project: ProjectDescriptor, _testType: 'unit' | 'integration' | 'e2e'): string {
@@ -175,6 +177,9 @@ export class NodeAdapter implements LanguageAdapter {
     }
 
     private convertCoverage(data: any): CoverageSummary {
+        if (!data) {
+            return { total: 0, covered: 0, percentage: 0 };
+        }
         return {
             total: data.total || 0,
             covered: data.covered || 0,
@@ -182,7 +187,7 @@ export class NodeAdapter implements LanguageAdapter {
         };
     }
 
-    private getPackageManager(project: ProjectDescriptor): string {
-        return project.packageManager || 'npm';
+    private getPackageManager(project: ProjectDescriptor | undefined): string {
+        return project?.packageManager || 'npm';
     }
 }

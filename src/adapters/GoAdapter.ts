@@ -1,6 +1,6 @@
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { LanguageAdapter } from './LanguageAdapter.js';
-import { CoverageReport } from '../models/CoverageReport.js';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { LanguageAdapter } from './LanguageAdapter';
+import { CoverageReport } from '../models/CoverageReport';
 import path from 'path';
 
 /**

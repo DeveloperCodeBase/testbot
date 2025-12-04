@@ -27,11 +27,20 @@ export interface BotConfig {
     exclude_patterns: string[];
     llm: {
         provider: 'openai' | 'claude' | 'gemini' | 'local' | 'openrouter';
-        model: string;
+        model: string; // Default/fallback model
+        mode?: 'balanced' | 'cheap' | 'premium';
+        models?: {
+            planner?: string;      // High-level analysis & strategy
+            coder?: string;        // Main code generation
+            long_context?: string; // Large context windows
+            helper?: string;       // Quick transformations
+        };
         api_key?: string;
         max_tokens: number;
         temperature: number;
         timeout: number;
+        max_tokens_per_run?: number;
+        token_budget_warn_threshold?: number;
     };
     git: {
         enabled: boolean;
@@ -93,10 +102,19 @@ export const DEFAULT_CONFIG: BotConfig = {
     ],
     llm: {
         provider: 'openrouter',
-        model: 'openai/gpt-4.1-mini',
+        model: 'google/gemini-2.0-flash-exp:free', // Default fallback
+        mode: 'balanced',
+        models: {
+            planner: 'nousresearch/hermes-3-llama-3.1-405b',
+            coder: 'google/gemini-2.0-flash-exp:free',
+            long_context: 'google/gemini-2.0-flash-exp:free',
+            helper: 'meta-llama/llama-3.2-3b-instruct:free',
+        },
         max_tokens: 4000,
         temperature: 0.2,
         timeout: 60000,
+        max_tokens_per_run: 1000000,
+        token_budget_warn_threshold: 0.8,
     },
     git: {
         enabled: false,

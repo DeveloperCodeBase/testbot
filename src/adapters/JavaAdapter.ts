@@ -1,7 +1,7 @@
 import path from 'path';
-import { LanguageAdapter } from './LanguageAdapter.js';
-import { ProjectDescriptor } from '../models/ProjectDescriptor.js';
-import { CoverageReport } from '../models/CoverageReport.js';
+import { LanguageAdapter } from './LanguageAdapter';
+import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { CoverageReport } from '../models/CoverageReport';
 
 /**
  * Language adapter for Java projects
@@ -51,7 +51,7 @@ export class JavaAdapter implements LanguageAdapter {
     }
 
     getCoverageCommand(project: ProjectDescriptor): string | null {
-        const buildTool = project.buildTool || 'maven';
+        const buildTool = project.buildTool;
 
         if (buildTool === 'maven') {
             return 'mvn test jacoco:report';
@@ -59,6 +59,7 @@ export class JavaAdapter implements LanguageAdapter {
             return './gradlew test jacocoTestReport';
         }
 
+        // Return null for unknown or missing buildTool
         return null;
     }
 

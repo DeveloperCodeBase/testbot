@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
-import logger from '../utils/logger.js';
-import { ensureDir, writeFile } from '../utils/fileUtils.js';
+import logger from '../utils/logger';
+import { ensureDir, writeFile } from '../utils/fileUtils';
 import path from 'path';
 
 export interface CommandResult {

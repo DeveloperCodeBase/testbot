@@ -1,11 +1,11 @@
 // @ts-nocheck
-import { EnvironmentHealer } from '../EnvironmentHealer.js';
-import { BotConfig } from '../../config/schema.js';
-import { CommandRunner } from '../../executor/CommandRunner.js';
-import logger from '../../utils/logger.js';
+import { EnvironmentHealer } from '../EnvironmentHealer';
+import { BotConfig } from '../../config/schema';
+import { CommandRunner } from '../../executor/CommandRunner';
+import logger from '../../utils/logger';
 
-jest.mock('../../executor/CommandRunner.js');
-jest.mock('../../utils/logger.js');
+jest.mock('../../executor/CommandRunner');
+jest.mock('../../utils/logger');
 
 type AutoFixAction = {
     project: string;
