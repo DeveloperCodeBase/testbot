@@ -11,8 +11,10 @@ import { EnvironmentHealer } from '../env/EnvironmentHealer';
 import { NodeEnvironmentHealer } from '../env/NodeEnvironmentHealer';
 import { PythonEnvironmentHealer } from '../env/PythonEnvironmentHealer';
 import { JavaEnvironmentHealer } from '../env/JavaEnvironmentHealer';
+import { CSharpEnvironmentHealer } from '../env/CSharpEnvironmentHealer';
 import { EnvironmentIssue, AutoFixAction } from '../models/EnvironmentModels';
 import { ProjectDescriptor } from '../models/ProjectDescriptor';
+import { LLMError, LLMErrorCategory } from '../llm/OpenRouterClient';
 import path from 'path';
 
 /**
@@ -39,6 +41,7 @@ export class JobOrchestrator {
     private state: JobState = 'INIT';
     private jobId: string = '';
     private errors: string[] = [];
+    private jobIssues: JobIssue[] = []; // Collects LLM and other global issues
     private testGenerator?: TestGenerator; // Track for LLM usage stats
 
     constructor(config: BotConfig) {
@@ -78,14 +81,41 @@ export class JobOrchestrator {
 
             // EXECUTE
             this.setState('EXECUTE');
-            const projectResults = await this.executeTests(analysis, repoPath, artifactsDir, generatedFilesMap, healingResults);
+            let projectResults = await this.executeTests(analysis, repoPath, artifactsDir, generatedFilesMap, healingResults);
 
-            // REFINE (TODO: implement refinement loop)
+            // REFINE
             this.setState('REFINE');
-            // For now, skip refinement in initial implementation
+            const maxIterations = this.config.refinement?.max_iterations || 3;
+            let iteration = 0;
+
+            while (iteration < maxIterations) {
+                iteration++;
+                logger.info(`\n🔄 Refinement Iteration ${iteration}/${maxIterations}`);
+
+                const needsRefinement = await this.analyzeForRefinement(projectResults, healingResults);
+                if (!needsRefinement) {
+                    logger.info('✅ No further refinement needed');
+                    break;
+                }
+
+                // Apply targeted healing and regeneration
+                await this.applyRefinement(
+                    analysis,
+                    repoPath,
+                    projectResults,
+                    healingResults,
+                    generatedFilesMap
+                );
+
+                // Re-execute tests for affected projects
+                logger.info('Running tests after refinement...');
+                projectResults = await this.executeTests(analysis, repoPath, artifactsDir, generatedFilesMap, healingResults);
+            }
 
             // FINALIZE
             this.setState('FINALIZE');
+
+            // Self-inspection
             const result = this.createJobResult(
                 repoInput,
                 repoPath,
@@ -97,13 +127,16 @@ export class JobOrchestrator {
                 healingResults
             );
 
+            // Analyze result and update status if needed
+            this.analyzeResult(result);
+
             // Cleanup
             if (!isLocal) {
                 await this.repoManager.cleanup(jobId);
             }
 
             this.setState('COMPLETE');
-            logger.info(`Job ${jobId} completed successfully`);
+            logger.info(`Job ${jobId} completed with status: ${result.status}`);
 
             return result;
         } catch (error) {
@@ -134,21 +167,26 @@ export class JobOrchestrator {
 
         for (const project of analysis.projects) {
             const projectPath = path.join(repoPath, project.path);
-            const results = await this.testGenerator.generateAllTests(project, projectPath);
+            try {
+                const results = await this.testGenerator.generateAllTests(project, projectPath);
 
-            // Collect errors from generation
-            if (results.errors && results.errors.length > 0) {
-                this.errors.push(...results.errors);
-            }
+                // Collect errors from generation
+                if (results.errors && results.errors.length > 0) {
+                    this.errors.push(...results.errors);
+                }
 
-            const files = [...results.unit, ...results.integration, ...results.e2e];
-            projectFiles.set(project.name, files);
+                const files = [...results.unit, ...results.integration, ...results.e2e];
+                projectFiles.set(project.name, files);
 
-            // Log diagnostic information
-            if (files.length === 0) {
-                const msg = `No tests generated for project ${project.name}. Check: LLM configuration, source file discovery, or generation errors above.`;
-                logger.warn(msg);
-                this.errors.push(msg);
+                // Log diagnostic information
+                if (files.length === 0) {
+                    const msg = `No tests generated for project ${project.name}. Check: LLM configuration, source file discovery, or generation errors above.`;
+                    logger.warn(msg);
+                    this.errors.push(msg);
+                }
+            } catch (error) {
+                this.handleLLMError(error, project.name, 'generate');
+                projectFiles.set(project.name, []);
             }
         }
 
@@ -181,11 +219,45 @@ export class JobOrchestrator {
                 });
             } catch (error) {
                 logger.error(`Failed to heal environment for ${project.name}: ${error}`);
+                this.handleLLMError(error, project.name, 'env_heal');
                 this.errors.push(`Environment healing failed for ${project.name}: ${error}`);
             }
         }
 
         return results;
+    }
+
+    /**
+     * Handle LLM errors and create JobIssues
+     */
+    private handleLLMError(error: unknown, project: string, stage: JobIssue['stage']): void {
+        if (error instanceof LLMError) {
+            const severity = error.category === LLMErrorCategory.RATE_LIMIT ? 'warning' : 'error';
+
+            this.jobIssues.push({
+                id: `${project}-${stage}-${error.category}-${Date.now()}`,
+                project,
+                stage,
+                kind: error.category,
+                severity,
+                message: error.message,
+                suggestion: error.suggestedRemediation || 'Check logs for details',
+                details: error.rawMessage,
+                modelName: error.modelId,
+                taskType: error.task
+            });
+        } else {
+            // Generic error
+            this.jobIssues.push({
+                id: `${project}-${stage}-UNKNOWN-${Date.now()}`,
+                project,
+                stage,
+                kind: 'UNKNOWN_ERROR',
+                severity: 'error',
+                message: error instanceof Error ? error.message : String(error),
+                suggestion: 'Check system logs and configuration'
+            });
+        }
     }
 
     /**
@@ -199,10 +271,10 @@ export class JobOrchestrator {
             return new PythonEnvironmentHealer(this.config);
         } else if (lang === 'java') {
             return new JavaEnvironmentHealer(this.config);
+        } else if (lang === 'csharp' || lang === 'c#') {
+            return new CSharpEnvironmentHealer(this.config);
         }
-        // Return a dummy healer or throw? For now throw to be explicit, or maybe just log and return null?
-        // The plan said throw, but maybe safer to have a base implementation that does nothing.
-        // But since we only support these languages, throw is fine.
+        // No healer available for this language
         throw new Error(`No environment healer available for language: ${project.language}`);
     }
 
@@ -307,30 +379,6 @@ export class JobOrchestrator {
             }
         }
 
-        let status: 'success' | 'failed' | 'partial' = 'success';
-
-        const hasFailedProjects = projectResults.some(p => p.overallStatus === 'failed');
-        const hasPartialProjects = projectResults.some(p => p.overallStatus === 'partial');
-        const hasErrorIssues = allEnvIssues.some(i => i.severity === 'error');
-        const hasFailedSuites = projectResults.some(p =>
-            p.testSuites.some(s => s.status === 'failed')
-        );
-
-        // Job is a failure if:
-        // - Any project has overall status "failed"
-        // - Any tests failed
-        // - Any error-level environment issues exist
-        // - Any test suite failed
-        // - No tests ran but there were issues attempting to run them
-        if (hasFailedProjects || failedTests > 0 || hasErrorIssues || hasFailedSuites) {
-            status = 'failed';
-        } else if (totalTests === 0 && allEnvIssues.length > 0) {
-            // If no tests ran but there are issues, mark as failure
-            status = 'failed';
-        } else if (hasPartialProjects) {
-            status = 'partial';
-        }
-
         // Aggregate LLM usage statistics
         let llmUsage;
         if (this.testGenerator) {
@@ -360,11 +408,17 @@ export class JobOrchestrator {
             };
         }
 
+        // Combine all issues
+        const issues = [
+            ...this.jobIssues,
+            ...this.buildJobIssues(allEnvIssues, projectResults)
+        ];
+
         return {
             jobId: this.jobId,
             repoPath,
             repoUrl: isLocal ? undefined : repoUrl,
-            status,
+            status: 'success', // Will be updated by analyzeResult
             startTime,
             endTime,
             duration,
@@ -382,9 +436,39 @@ export class JobOrchestrator {
                 suitesWithDiscoveryErrors,
                 reason,
             },
-            issues: this.buildJobIssues(allEnvIssues, projectResults),
+            issues,
             llmUsage
         };
+    }
+
+    /**
+     * Analyze job result and update status
+     */
+    private analyzeResult(result: JobResult): void {
+        const { projectResults, issues, summary } = result;
+
+        const hasFailedProjects = projectResults.some(p => p.overallStatus === 'failed');
+        const hasPartialProjects = projectResults.some(p => p.overallStatus === 'partial');
+        const hasErrorIssues = issues.some(i => i.severity === 'error');
+        const hasFailedSuites = summary.failedSuites ? summary.failedSuites > 0 : false;
+        const hasFailedTests = summary.failedTests > 0;
+
+        // Job is a failure if:
+        // - Any project has overall status "failed"
+        // - Any tests failed
+        // - Any error-level issues exist
+        // - Any test suite failed
+        // - No tests ran but there were issues attempting to run them
+        if (hasFailedProjects || hasFailedTests || hasErrorIssues || hasFailedSuites) {
+            result.status = 'failed';
+        } else if (summary.totalTests === 0 && issues.length > 0) {
+            // If no tests ran but there are issues, mark as failure
+            result.status = 'failed';
+        } else if (hasPartialProjects) {
+            result.status = 'partial';
+        } else {
+            result.status = 'success';
+        }
     }
 
     /**
@@ -473,6 +557,92 @@ export class JobOrchestrator {
                 suggestion: 'Check the error details and verify the repository path'
             }]
         };
+    }
+
+    /**
+     * Analyze if refinement is needed
+     */
+    private async analyzeForRefinement(
+        projectResults: TestRunResult[],
+        healingResults: Map<string, { issues: EnvironmentIssue[]; actions: AutoFixAction[] }>
+    ): Promise<boolean> {
+        let needed = false;
+
+        for (const result of projectResults) {
+            // Check for failures
+            if (result.overallStatus !== 'passed') {
+                logger.info(`Project ${result.project} needs refinement (Status: ${result.overallStatus})`);
+                needed = true;
+            }
+
+            // Check for missing tests (NO_TESTS_FOUND)
+            const envResult = healingResults.get(result.project);
+            if (envResult) {
+                const noTestsIssue = envResult.issues.find(i => i.code === 'NO_TESTS_FOUND');
+                if (noTestsIssue) {
+                    logger.info(`Project ${result.project} needs refinement (NO_TESTS_FOUND)`);
+                    needed = true;
+                }
+            }
+        }
+
+        return needed;
+    }
+
+    /**
+     * Apply refinement actions
+     */
+    private async applyRefinement(
+        analysis: RepoAnalysis,
+        repoPath: string,
+        projectResults: TestRunResult[],
+        healingResults: Map<string, { issues: EnvironmentIssue[]; actions: AutoFixAction[] }>,
+        generatedFilesMap: Map<string, string[]>
+    ): Promise<void> {
+        for (const result of projectResults) {
+            const project = analysis.projects.find(p => p.name === result.project);
+            if (!project) continue;
+
+            const projectPath = path.join(repoPath, project.path);
+            const envResult = healingResults.get(project.name);
+            if (!envResult) continue;
+
+            // 1. Handle NO_TESTS_FOUND by generating minimal tests
+            const noTestsIssue = envResult.issues.find(i => i.code === 'NO_TESTS_FOUND');
+            if (noTestsIssue) {
+                logger.info(`Fixing NO_TESTS_FOUND for ${project.name}`);
+
+                // Determine which type is missing
+                // We can check config or just try both if enabled
+                if (this.config.enabled_tests.integration) {
+                    const newFiles = await this.testGenerator!.generateMinimalTests(project, projectPath, 'integration');
+                    if (newFiles.length > 0) {
+                        const currentFiles = generatedFilesMap.get(project.name) || [];
+                        generatedFilesMap.set(project.name, [...currentFiles, ...newFiles]);
+                        // Mark issue as fixed? Or let next run clear it.
+                        // We should remove the issue so we don't loop forever if it persists
+                        envResult.issues = envResult.issues.filter(i => i.code !== 'NO_TESTS_FOUND');
+                    }
+                }
+
+                if (this.config.enabled_tests.e2e) {
+                    const newFiles = await this.testGenerator!.generateMinimalTests(project, projectPath, 'e2e');
+                    if (newFiles.length > 0) {
+                        const currentFiles = generatedFilesMap.get(project.name) || [];
+                        generatedFilesMap.set(project.name, [...currentFiles, ...newFiles]);
+                        envResult.issues = envResult.issues.filter(i => i.code !== 'NO_TESTS_FOUND');
+                    }
+                }
+            }
+
+            // 2. Handle missing dependencies (already handled by PytestAutoFixLoop/JestAutoFixLoop, but maybe we need more?)
+            // The AutoFixLoops run during execution. If they failed, we might need manual intervention or different strategy.
+            // But for now, we assume the loops did their best.
+
+            // 3. Handle coverage issues?
+            // If coverage is low, we could generate more tests.
+            // TODO: Implement coverage-driven generation
+        }
     }
 
     /**

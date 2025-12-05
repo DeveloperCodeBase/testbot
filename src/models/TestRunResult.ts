@@ -42,6 +42,7 @@ export interface TestRunResult {
  * Represents a structured issue in the job execution
  */
 export interface JobIssue {
+    id?: string;        // Unique identifier for tracking
     project: string;
     stage: 'env_heal' | 'generate' | 'execute' | 'coverage' | 'refine' | 'llm';
     kind: string;  // e.g. 'JEST_MISSING_PACKAGE', 'TEST_TS_ERROR', 'COVERAGE_BELOW_THRESHOLD', 'LLM_CALL_FAILED'

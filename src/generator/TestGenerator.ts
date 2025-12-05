@@ -104,6 +104,24 @@ export class TestGenerator {
     }
 
     /**
+     * Generate minimal tests for a project to ensure coverage collection
+     */
+    async generateMinimalTests(
+        project: ProjectDescriptor,
+        projectPath: string,
+        type: 'integration' | 'e2e'
+    ): Promise<string[]> {
+        logger.info(`Generating minimal ${type} tests for ${project.name}`);
+
+        // Delegate to appropriate generator
+        if (type === 'integration') {
+            return await this.integrationTestGenerator.generateMinimalTests(project, projectPath);
+        } else {
+            return await this.e2eTestGenerator.generateMinimalTests(project, projectPath);
+        }
+    }
+
+    /**
      * Get aggregated LLM usage statistics from all generators
      */
     getLLMUsageStats() {

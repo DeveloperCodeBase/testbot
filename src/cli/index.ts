@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 
+import * as dotenv from 'dotenv';
+import path from 'path';
 import { Command } from 'commander';
 import { ConfigLoader } from '../config/ConfigLoader';
 import { JobOrchestrator } from '../orchestrator/JobOrchestrator';
 import { ReportGenerator } from '../reporter/ReportGenerator';
 import logger from '../utils/logger';
 import { BotConfig } from '../config/schema';
-import path from 'path';
+
+// Load .env from repo root if present
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const program = new Command();
 
@@ -59,11 +63,18 @@ async function analyzeAction(repo: string, options: any) {
 
         // Print summary
         console.log('\n=== Test Bot Results ===');
-        console.log(`Status: ${result.status}`);
+
+        // Colorize status
+        const statusColor = result.status === 'success' ? '\x1b[32m' : result.status === 'partial' ? '\x1b[33m' : '\x1b[31m';
+        const resetColor = '\x1b[0m';
+        console.log(`Status: ${statusColor}${result.status.toUpperCase()}${resetColor}`);
+
         console.log(`Projects: ${result.summary.totalProjects}`);
         console.log(`Total Tests: ${result.summary.totalTests}`);
         console.log(`Passed: ${result.summary.passedTests}`);
         console.log(`Failed: ${result.summary.failedTests}`);
+        if (result.summary.failedSuites) console.log(`Failed Suites: ${result.summary.failedSuites}`);
+        if (result.summary.suitesWithDiscoveryErrors) console.log(`Discovery Errors: ${result.summary.suitesWithDiscoveryErrors}`);
         console.log(`Generated Files: ${result.generatedTestFiles.length}`);
         console.log(`Duration: ${(result.duration / 1000).toFixed(2)}s`);
 
@@ -74,11 +85,44 @@ async function analyzeAction(repo: string, options: any) {
             console.log(`HTML Report: ${reports.htmlPath}`);
         }
 
-        if (result.status === 'failed') {
-            console.error('\nErrors:');
-            result.errors.forEach(err => console.error(`- ${err}`));
-            process.exit(1);
+        // Print Issues
+        if (result.issues && result.issues.length > 0) {
+            console.log('\n=== Top Issues ===');
+            // Group by severity
+            const errors = result.issues.filter(i => i.severity === 'error');
+            const warnings = result.issues.filter(i => i.severity === 'warning');
+
+            if (errors.length > 0) {
+                console.log('\x1b[31mErrors:\x1b[0m');
+                errors.slice(0, 5).forEach(issue => {
+                    console.log(`- [${issue.project}] ${issue.kind}: ${issue.message}`);
+                    if (issue.suggestion) console.log(`  Suggestion: ${issue.suggestion}`);
+                });
+                if (errors.length > 5) console.log(`  ...and ${errors.length - 5} more errors`);
+            }
+
+            if (warnings.length > 0) {
+                console.log('\x1b[33mWarnings:\x1b[0m');
+                warnings.slice(0, 5).forEach(issue => {
+                    console.log(`- [${issue.project}] ${issue.kind}: ${issue.message}`);
+                });
+                if (warnings.length > 5) console.log(`  ...and ${warnings.length - 5} more warnings`);
+            }
         }
+
+        if (result.status === 'failed') {
+            console.error('\nJob Failed. See report for details.');
+            process.exit(1);
+        } else if (result.status === 'partial') {
+            console.warn('\nJob Completed with Issues. See report for details.');
+            // Exit with 0 for partial? Or 1? Usually 0 if we want to allow pipeline to continue, but maybe 1 for strictness.
+            // Requirement says "Mark the project as failed or partial", usually implies non-zero exit code if strict.
+            // But let's stick to 0 for partial to differentiate from crash/total failure, unless user specified otherwise.
+            // User said "Do not silently succeed".
+            process.exit(0);
+        }
+
+        logger.info('Test bot completed successfully');
 
         logger.info('Test bot completed successfully');
     } catch (error) {

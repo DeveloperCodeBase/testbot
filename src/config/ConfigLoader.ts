@@ -133,5 +133,32 @@ export class ConfigLoader {
         if (process.env.VERBOSE === 'true') {
             config.output.verbose = true;
         }
+
+        this.validateConfig(config);
+    }
+
+    /**
+     * Validate configuration
+     */
+    private validateConfig(config: BotConfig): void {
+        // Validate API Key
+        if (config.llm.provider === 'openrouter' && !config.llm.api_key) {
+            throw new Error('Missing OPENROUTER_API_KEY. Please set it in your .env file.');
+        }
+
+        // Validate Models (No :free allowed)
+        const validateModel = (model?: string, name?: string) => {
+            if (model && model.endsWith(':free')) {
+                throw new Error(`Model ${name || ''} (${model}) is a free tier model (:free). Production mode requires paid models.`);
+            }
+        };
+
+        validateModel(config.llm.model, 'default');
+        if (config.llm.models) {
+            validateModel(config.llm.models.planner, 'planner');
+            validateModel(config.llm.models.coder, 'coder');
+            validateModel(config.llm.models.long_context, 'long_context');
+            validateModel(config.llm.models.helper, 'helper');
+        }
     }
 }

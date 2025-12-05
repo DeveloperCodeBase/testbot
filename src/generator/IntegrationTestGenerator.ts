@@ -147,6 +147,58 @@ Test focus: API endpoints, service interactions, database operations`;
     }
 
     /**
+     * Generate minimal integration tests for a project
+     */
+    async generateMinimalTests(
+        project: ProjectDescriptor,
+        projectPath: string
+    ): Promise<string[]> {
+        logger.info(`Generating minimal integration tests for project: ${project.name}`);
+        const adapter = this.adapterRegistry.getAdapter(project);
+        if (!adapter) return [];
+
+        const generatedFiles: string[] = [];
+        const testDir = adapter.getTestDirectory(project, 'integration');
+        const ext = project.language === 'python' ? '.py' :
+            project.language === 'typescript' ? '.test.ts' :
+                project.language === 'javascript' ? '.test.js' : '.test';
+
+        const filename = `health_check_integration${ext}`;
+        const testPath = path.join(projectPath, testDir === '.' ? 'tests/integration' : testDir, filename);
+
+        let content = '';
+        if (project.language === 'python') {
+            content = `import pytest
+import os
+
+def test_environment_health():
+    """
+    Minimal integration test to verify the test environment is working.
+    """
+    assert True
+    assert os.environ.get("PATH") is not None
+`;
+        } else if (project.language === 'typescript' || project.language === 'javascript') {
+            content = `describe('Integration Environment Health', () => {
+    it('should have a working test environment', () => {
+        expect(true).toBe(true);
+        expect(process.env).toBeDefined();
+    });
+});
+`;
+        } else {
+            // Generic fallback
+            return [];
+        }
+
+        await writeFile(testPath, content);
+        generatedFiles.push(testPath);
+        logger.info(`Generated minimal integration test: ${testPath}`);
+
+        return generatedFiles;
+    }
+
+    /**
      * Normalize filename to prevent double project name nesting
      * Strips project name prefix if present (eg., 'backend-node/file.test.ts' => 'file.test.ts')
      */

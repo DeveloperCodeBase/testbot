@@ -46,7 +46,7 @@ export class LLMOrchestrator {
 
     constructor(config: BotConfig['llm']) {
         this.config = config;
-        this.openRouterClient = new OpenRouterClient();
+        this.openRouterClient = new OpenRouterClient(config.api_key || '', undefined, undefined, config.model);
     }
 
     /**
@@ -68,7 +68,7 @@ export class LLMOrchestrator {
 
         // 4. Make the call
         try {
-            const result = await this.callOpenRouter(prompt, model);
+            const result = await this.callOpenRouter(prompt, model, task);
             this.recordUsage(model, task, estimatedTokens);
             return result;
         } catch (error) {
@@ -327,7 +327,7 @@ Return ONLY the fixed test code in the same format as the original, with the fil
         } else if (provider === 'gemini') {
             return await this.callGemini(prompt, model, api_key || process.env.GOOGLE_API_KEY || '');
         } else if (provider === 'openrouter') {
-            return await this.callOpenRouter(prompt, model);
+            return await this.callOpenRouter(prompt, model, 'generate');
         }
 
         throw new Error(`Unsupported LLM provider: ${provider}`);
@@ -427,13 +427,13 @@ Return ONLY the fixed test code in the same format as the original, with the fil
     /**
      * Call OpenRouter API
      */
-    private async callOpenRouter(prompt: string, model: string): Promise<string> {
+    private async callOpenRouter(prompt: string, model: string, task: string): Promise<string> {
         return await this.openRouterClient.chatCompletion(model, [
             {
                 role: 'user',
                 content: prompt,
             },
-        ]);
+        ], task);
     }
 
     /**

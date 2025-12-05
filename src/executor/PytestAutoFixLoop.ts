@@ -5,6 +5,9 @@ import { EnvironmentIssue, AutoFixAction } from '../models/EnvironmentModels';
 import { execAsync } from '../utils/execUtils';
 import logger from '../utils/logger';
 import path from 'path';
+import { OpenRouterClient } from '../llm/OpenRouterClient';
+import { findFiles, readFile, writeFile } from '../utils/fileUtils';
+import { LLMMessage } from '../models/LLMMessage';
 
 /**
  * Implements iterative auto-fix healing loop for Pytest
@@ -167,6 +170,7 @@ export class PytestAutoFixLoop {
      */
     private analyzePytestError(output: string): string {
         if (output.match(/collected 0 items/i)) return 'NO_TESTS_FOUND';
+        if (output.match(/ValidationError/i) && output.match(/pydantic/i)) return 'PYDANTIC_VALIDATION';
         if (output.match(/ModuleNotFoundError/i)) return 'IMPORT_ERROR';
         if (output.match(/ImportError/i)) return 'IMPORT_ERROR';
         if (output.match(/SyntaxError/i)) return 'SYNTAX_ERROR';
@@ -193,6 +197,9 @@ export class PytestAutoFixLoop {
         switch (issueType) {
             case 'NO_TESTS_FOUND':
                 return await this.fixTestDiscovery(project, projectPath, healer, errorOutput);
+
+            case 'PYDANTIC_VALIDATION':
+                return await this.fixPydanticValidation(project, projectPath, healer, errorOutput);
 
             case 'IMPORT_ERROR':
                 return await this.fixImportError(project, projectPath, healer, errorOutput);
@@ -252,11 +259,131 @@ export class PytestAutoFixLoop {
     }
 
     /**
-     * Fix import errors (missing dependencies)
+     * Fix Pydantic validation errors in generated tests
+     */
+    private async fixPydanticValidation(
+        project: ProjectDescriptor,
+        projectPath: string,
+        healer: EnvironmentHealer,
+        errorOutput: string
+    ): Promise<boolean> {
+        logger.info('Detected Pydantic ValidationError in generated tests');
+
+        // Extract failing test file and model name from error output
+        const testFileMatch = errorOutput.match(/([^\s]+\.py):(\d+):/);
+        const modelMatch = errorOutput.match(/ValidationError: \d+ validation errors? for (\w+)/);
+
+        if (!testFileMatch || !modelMatch) {
+            logger.warn('Could not extract test file or model name from Pydantic error');
+            return false;
+        }
+
+        const testFile = testFileMatch[1];
+        const modelName = modelMatch[1];
+        logger.info(`Pydantic error in ${testFile} for model ${modelName}`);
+
+        // Find model definition
+        // We search in the project path for python files that define this class
+        const modelFiles = await findFiles(projectPath, '**/*.py');
+        let modelDefinition = '';
+
+        for (const file of modelFiles) {
+            // Skip test files and venv
+            if (file.includes('tests/') || file.includes('.venv') || file.includes('__pycache__')) continue;
+
+            const content = await readFile(path.join(projectPath, file));
+            if (content.includes(`class ${modelName}`)) {
+                modelDefinition = content;
+                logger.info(`Found model definition in ${file}`);
+                break;
+            }
+        }
+
+        if (!modelDefinition) {
+            logger.warn(`Could not find definition for model ${modelName}`);
+            // Fallback to just reporting
+            healer.addIssue(
+                project.name,
+                'execution',
+                'error',
+                'PYDANTIC_VALIDATION_IN_GENERATED_TESTS',
+                `Generated tests have Pydantic validation errors for model ${modelName}`,
+                `Fix test file: ${testFile}. Ensure model construction matches schema definition.`
+            );
+            return false;
+        }
+
+        // Regenerate test using LLM
+        try {
+            const config = healer.getConfig();
+            const client = new OpenRouterClient(config.llm.api_key || '');
+            const model = config.llm.models?.coder || config.llm.model;
+
+            const testFilePath = path.join(projectPath, testFile);
+
+            if (!(await import('../utils/fileUtils')).fileExists(testFilePath)) {
+                // Try finding it relative to project root if absolute path failed
+                // Sometimes pytest output gives relative path
+            }
+
+            // Ensure we have the correct path. testFile from output might be relative or absolute
+            let absoluteTestPath = testFile;
+            if (!path.isAbsolute(testFile)) {
+                absoluteTestPath = path.join(projectPath, testFile);
+            }
+
+            const testContent = await readFile(absoluteTestPath);
+
+            const prompt = `
+You are an expert Python developer. A Pytest test is failing with a Pydantic ValidationError.
+Your task is to fix the test code to match the Pydantic model definition.
+
+Model Definition:
+\`\`\`python
+${modelDefinition}
+\`\`\`
+
+Failing Test Code:
+\`\`\`python
+${testContent}
+\`\`\`
+
+Error Message:
+${errorOutput}
+
+Return the corrected test file content. Do not include any explanation, just the code block.
+`;
+
+            logger.info(`Regenerating test ${testFile} using LLM...`);
+
+            const messages: LLMMessage[] = [
+                { role: 'system' as const, content: 'You are an expert Python developer. Fix the failing test.' },
+                { role: 'user' as const, content: prompt }
+            ];
+
+            const response = await client.chatCompletion(model, messages, 'fix-pydantic');
+
+            // Extract code block
+            const codeMatch = response.match(/```python\n([\s\S]*?)```/) || response.match(/```\n([\s\S]*?)```/);
+            const newContent = codeMatch ? codeMatch[1] : response;
+
+            await writeFile(absoluteTestPath, newContent);
+            logger.info(`Regenerated test file ${testFile}`);
+
+            return true;
+
+        } catch (error) {
+            logger.error(`Failed to regenerate test: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * Fix import errors (missing dependencies or incorrect import paths)
      */
     private async fixImportError(
         project: ProjectDescriptor,
-        _projectPath: string,
+        projectPath: string,
         healer: EnvironmentHealer,
         errorOutput: string
     ): Promise<boolean> {
@@ -266,35 +393,125 @@ export class PytestAutoFixLoop {
             const moduleName = match[1];
             logger.info(`Detected missing module: ${moduleName}`);
 
-            healer.addIssue(
-                project.name,
-                'execution',
-                'error',
-                'MISSING_DEP',
-                `Missing dependency: ${moduleName}`,
-                moduleName
-            );
+            // Check if this is an import path issue (module name contains project path structure)
+            // Pattern: services.user_service.app.services → should be app.services
+            // Pattern: services.<project-name>.<subpath> → should be <subpath>
+            const projectNamePattern = new RegExp(`services\\.${project.name.replace(/-/g, '_')}\\.(.+)`);
+            const pathMatch = moduleName.match(projectNamePattern);
 
-            // Add remediation to install it
-            // We can try to auto-install it right now
-            if (healer instanceof PythonEnvironmentHealer) {
-                // We assume pip install <module> works
-                // Note: module name might differ from package name (e.g. PIL vs Pillow), but often it's the same.
-                // Check if venv exists, else use global pip (risky) or just python -m pip
+            if (pathMatch) {
+                // This is an incorrect import path, not a missing dependency
+                const correctImport = pathMatch[1]; // e.g., "app.services"
+                logger.info(`Import path issue detected: ${moduleName} → ${correctImport}`);
 
-                // We'll try to use the healer's executeCommand
-                // But we don't have access to executeCommand (protected).
-                // We should add a public method to PythonEnvironmentHealer to install a package.
+                healer.addIssue(
+                    project.name,
+                    'execution',
+                    'error',
+                    'PYTHON_IMPORT_PATH_ERROR',
+                    `Incorrect import path in generated tests: ${moduleName}`,
+                    `Should use ${correctImport} instead`
+                );
 
-                // For now, let's just add the issue and let heal() handle it?
-                // heal() handles MISSING_PYTEST_DEP (from requirements.txt) and MISSING_VENV.
-                // It doesn't generic MISSING_DEP from execution.
-                // We should add logic to heal() in PythonEnvironmentHealer to handle MISSING_DEP.
+                // Fix the import in generated test files
+                if (healer instanceof PythonEnvironmentHealer) {
+                    await this.fixIncorrectImportPath(projectPath, moduleName, correctImport);
+                    return true;
+                }
+            }
+            // Check for common root modules that should be prefixed with 'app.'
+            else if ((moduleName === 'main' || moduleName === 'database') && healer instanceof PythonEnvironmentHealer) {
+                // Check if app/main.py or app/database.py exists
+                const { fileExists } = await import('../utils/fileUtils');
+                const modulePath = path.join(projectPath, 'app', `${moduleName}.py`);
 
-                return true;
+                if (await fileExists(modulePath)) {
+                    const correctImport = `app.${moduleName}`;
+                    logger.info(`Import path issue detected: ${moduleName} → ${correctImport}`);
+
+                    healer.addIssue(
+                        project.name,
+                        'execution',
+                        'error',
+                        'PYTHON_IMPORT_PATH_ERROR',
+                        `Incorrect import path in generated tests: ${moduleName}`,
+                        `Should use ${correctImport} instead`
+                    );
+
+                    await this.fixIncorrectImportPath(projectPath, moduleName, correctImport);
+                    return true;
+                }
+            }
+
+            if (!pathMatch) {
+                // This is genuinely a missing dependency
+                healer.addIssue(
+                    project.name,
+                    'execution',
+                    'error',
+                    'MISSING_DEP',
+                    `Missing dependency: ${moduleName}`,
+                    moduleName
+                );
+
+                // Add remediation to install it
+                // We can try to auto-install it right now
+                if (healer instanceof PythonEnvironmentHealer) {
+                    logger.info(`Auto-installing missing python package: ${moduleName}`);
+                    await healer.installPackage(projectPath, moduleName, 'MISSING_DEP');
+                    return true;
+                }
             }
         }
         return false;
+    }
+
+    /**
+     * Fix incorrect import paths in Python test files
+     */
+    private async fixIncorrectImportPath(
+        projectPath: string,
+        incorrectImport: string,
+        correctImport: string
+    ): Promise<void> {
+        logger.info(`Fixing import paths: ${incorrectImport} → ${correctImport}`);
+
+        const { readFile, writeFile, findFiles } = await import('../utils/fileUtils');
+
+        // Find all Python test files in the project
+        const testFiles = await findFiles(projectPath, '**/{test_,tests/}*.py', {
+            ignore: ['**/node_modules/**', '**/.venv/**', '**/venv/**']
+        });
+
+        let fixedCount = 0;
+
+        for (const testFile of testFiles) {
+            try {
+                const content = await readFile(testFile);
+
+                // Check if this file has the incorrect import
+                if (!content.includes(incorrectImport)) continue;
+
+                // Replace the incorrect import with the correct one
+                const fixedContent = content.replace(
+                    new RegExp(`from ${incorrectImport.replace(/\./g, '\\.')}`, 'g'),
+                    `from ${correctImport}`
+                ).replace(
+                    new RegExp(`import ${incorrectImport.replace(/\./g, '\\.')}`, 'g'),
+                    `import ${correctImport}`
+                );
+
+                if (fixedContent !== content) {
+                    await writeFile(testFile, fixedContent);
+                    logger.info(`✅ Fixed import in ${testFile}`);
+                    fixedCount++;
+                }
+            } catch (error) {
+                logger.warn(`Failed to fix imports in ${testFile}: ${error}`);
+            }
+        }
+
+        logger.info(`Fixed ${fixedCount} test file(s) with incorrect import paths`);
     }
 
     /**

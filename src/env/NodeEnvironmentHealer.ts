@@ -24,15 +24,18 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
         // 0. Detect if this is a TypeScript project
         const isTypeScript = await this.isTypeScriptProject(projectPath);
 
-        // 1. Check dependencies
+        // 1. Check for missing npm test script
+        await this.checkNpmTestScript(project, projectPath);
+
+        // 2. Check dependencies
         await this.checkDependencies(project, projectPath, generatedFiles);
 
-        // 2. Check Jest Configuration (if applicable)
+        // 3. Check Jest Configuration (if applicable)
         if (this.isJestProject(project, projectPath)) {
             await this.checkJestConfig(project, projectPath, isTypeScript);
         }
 
-        // 3. Check Vitest Configuration (if applicable)
+        // 4. Check Vitest Configuration (if applicable)
         if (this.isVitestProject(project, projectPath)) {
             await this.checkVitestConfig(project, projectPath, generatedFiles);
         }
@@ -41,7 +44,15 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
     async heal(projectPath: string): Promise<void> {
         // Fix issues in order of severity/dependency
 
-        // 1. Install missing dependencies
+        // 0. Fix missing npm test script (highest priority)
+        const missingTestScript = this.issues.filter(i => i.code === 'MISSING_NPM_TEST_SCRIPT' && !i.autoFixed);
+        for (const issue of missingTestScript) {
+            if (this.canUpdateConfig()) {
+                await this.fixMissingTestScript(projectPath, issue.code);
+            }
+        }
+
+        //  Install missing dependencies
         const missingDeps = this.issues.filter(i => i.code === 'MISSING_DEV_DEP' && !i.autoFixed);
         for (const issue of missingDeps) {
             if (this.canInstallDependencies()) {
@@ -119,6 +130,91 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
         }
 
         return false;
+    }
+
+    /**
+     * Check if package.json has a test script
+     */
+    private async checkNpmTestScript(project: ProjectDescriptor, projectPath: string): Promise<void> {
+        const packageJsonPath = path.join(projectPath, 'package.json');
+        if (!(await fileExists(packageJsonPath))) return;
+
+        const content = await readFile(packageJsonPath);
+        const pkg = JSON.parse(content);
+
+        // Check if test script exists
+        if (!pkg.scripts || !pkg.scripts.test) {
+            this.addIssue(
+                project.name,
+                'env-setup',
+                'error',
+                'MISSING_NPM_TEST_SCRIPT',
+                'package.json missing "test" script',
+                'npm test will fail without a test script defined'
+            );
+            this.addRemediation('MISSING_NPM_TEST_SCRIPT', [{
+                title: 'Add test script',
+                description: 'Add "test": "jest --runInBand --config ./jest.config.cjs" to package.json scripts',
+                filePath: packageJsonPath
+            }]);
+        } else if (pkg.scripts.test.includes('no test specified')) {
+            // Default boilerplate "echo \"Error: no test specified\""
+            this.addIssue(
+                project.name,
+                'env-setup',
+                'error',
+                'MISSING_NPM_TEST_SCRIPT',
+                'package.json has placeholder test script',
+                'Default "no test specified" script needs to be replaced'
+            );
+            this.addRemediation('MISSING_NPM_TEST_SCRIPT', [{
+                title: 'Replace placeholder test script',
+                description: 'Replace placeholder with "test": "jest --runInBand --config ./jest.config.cjs"',
+                filePath: packageJsonPath
+            }]);
+        }
+    }
+
+    /**
+     * Fix missing npm test script
+     */
+    private async fixMissingTestScript(projectPath: string, issueCode: string): Promise<void> {
+        const packageJsonPath = path.join(projectPath, 'package.json');
+        if (!(await fileExists(packageJsonPath))) return;
+
+        const content = await readFile(packageJsonPath);
+        const pkg = JSON.parse(content);
+
+        // Ensure scripts object exists
+        if (!pkg.scripts) {
+            pkg.scripts = {};
+        }
+
+        // Add test script based on project type
+        const hasJestConfig = await fileExists(path.join(projectPath, 'jest.config.cjs')) ||
+            await fileExists(path.join(projectPath, 'jest.config.js'));
+
+        if (hasJestConfig) {
+            pkg.scripts.test = 'jest --runInBand --config ./jest.config.cjs';
+        } else {
+            pkg.scripts.test = 'jest --runInBand';
+        }
+
+        // Write back
+        await writeFile(packageJsonPath, JSON.stringify(pkg, null, 2) + '\n');
+
+        const action = {
+            project: path.basename(projectPath),
+            path: packageJsonPath,
+            command: 'update-package-json',
+            description: `Added test script: "${pkg.scripts.test}" to package.json`,
+            success: true,
+            timestamp: new Date().toISOString()
+        };
+        this.actions.push(action);
+        this.markIssueFixed(issueCode, [action]);
+
+        logger.info(`✅ Added test script to package.json: ${pkg.scripts.test}`);
     }
 
     private async checkDependencies(
@@ -227,6 +323,32 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
                     'MISSING_DEV_DEP',
                     'Missing jsdom dependency (required for React testing)',
                     'jsdom'
+                );
+            }
+        }
+
+        // Check for Jest specific dependencies
+        if (this.isJestProject(project, projectPath)) {
+            if (!allDeps['jest']) {
+                this.addIssue(
+                    project.name,
+                    'analysis',
+                    'warning',
+                    'MISSING_DEV_DEP',
+                    'Missing jest dependency',
+                    'jest'
+                );
+            }
+            // Check for ts-jest if TypeScript
+            const isTypeScript = await this.isTypeScriptProject(projectPath);
+            if (isTypeScript && !allDeps['ts-jest']) {
+                this.addIssue(
+                    project.name,
+                    'analysis',
+                    'warning',
+                    'MISSING_DEV_DEP',
+                    'Missing ts-jest dependency',
+                    'ts-jest'
                 );
             }
         }

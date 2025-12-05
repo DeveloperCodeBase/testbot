@@ -49,12 +49,7 @@ coverage:
 llm:
   provider: "openrouter"
   mode: "balanced"  # balanced | cheap | premium
-  models:
-    planner: "nousresearch/hermes-3-llama-3.1-405b"
-    coder: "google/gemini-2.0-flash-exp:free"
-    long_context: "google/gemini-2.0-flash-exp:free"
-    helper: "meta-llama/llama-3.2-3b-instruct:free"
-  max_tokens_per_run: 1000000
+
 ```
 
 ## LLM Configuration (Cost-Optimized Multi-Model Strategy)
@@ -86,11 +81,7 @@ The testbot automatically routes tasks to appropriate models:
 OPENROUTER_API_KEY=your_api_key_here
 
 # Balanced Mode (default, recommended)
-LLM_MODE=balanced
-LLM_MODEL_PLANNER=nousresearch/hermes-3-llama-3.1-405b
-LLM_MODEL_CODER=google/gemini-2.0-flash-exp:free
-LLM_MODEL_LONG_CONTEXT=google/gemini-2.0-flash-exp:free
-LLM_MODEL_HELPER=meta-llama/llama-3.2-3b-instruct:free
+
 
 # Token Budget
 LLM_MAX_TOKENS_PER_RUN=1000000
@@ -177,10 +168,7 @@ OPENROUTER_API_KEY=your-api-key-here
 LLM_MODE=balanced  # balanced | cheap | premium
 
 # Task-Specific Models (for balanced mode)
-LLM_MODEL_PLANNER=nousresearch/hermes-3-llama-3.1-405b
-LLM_MODEL_CODER=google/gemini-2.0-flash-exp:free
-LLM_MODEL_LONG_CONTEXT=google/gemini-2.0-flash-exp:free
-LLM_MODEL_HELPER=meta-llama/llama-3.2-3b-instruct:free
+
 
 # Token Budget
 LLM_MAX_TOKENS_PER_RUN=1000000

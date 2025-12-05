@@ -66,6 +66,9 @@ export interface BotConfig {
         artifacts_dir: string;
         verbose: boolean;
     };
+    refinement?: {
+        max_iterations: number;
+    };
 }
 
 /**
@@ -102,13 +105,13 @@ export const DEFAULT_CONFIG: BotConfig = {
     ],
     llm: {
         provider: 'openrouter',
-        model: 'google/gemini-2.0-flash-exp:free', // Default fallback
+        model: '', // Must be set via OPENROUTER_MODEL env var
         mode: 'balanced',
         models: {
-            planner: 'nousresearch/hermes-3-llama-3.1-405b',
-            coder: 'google/gemini-2.0-flash-exp:free',
-            long_context: 'google/gemini-2.0-flash-exp:free',
-            helper: 'meta-llama/llama-3.2-3b-instruct:free',
+            planner: '',         // Must be set via LLM_MODEL_PLANNER env var
+            coder: '',           // Must be set via LLM_MODEL_CODER env var
+            long_context: '',    // Must be set via LLM_MODEL_LONG_CONTEXT env var
+            helper: '',          // Must be set via LLM_MODEL_HELPER env var
         },
         max_tokens: 4000,
         temperature: 0.2,

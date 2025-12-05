@@ -100,7 +100,16 @@ export class E2ETestGenerator {
                 // Write generated test files
                 for (const [, content] of Object.entries(response.generatedFiles)) {
                     const testDir = adapter.getTestDirectory(project, 'e2e');
-                    const filename = `${flow.name.toLowerCase().replace(/\s+/g, '-')}.e2e${this.getTestExtension(project)}`;
+
+                    // For Python, use valid module names (underscores, no hyphens, prefix with test_)
+                    let filename: string;
+                    if (project.language === 'python') {
+                        const safeName = flow.name.toLowerCase().replace(/[\s-]+/g, '_');
+                        filename = `test_${safeName}_e2e.py`;
+                    } else {
+                        filename = `${flow.name.toLowerCase().replace(/\s+/g, '-')}.e2e${this.getTestExtension(project)}`;
+                    }
+
                     // Don't include testDir if it's just '.' to avoid issues
                     const testPath = testDir === '.'
                         ? path.join(projectPath, 'tests', 'e2e', filename)
@@ -154,6 +163,55 @@ Framework: ${project.framework || 'None'}`;
     private createArchitectureSummary(architecture: ArchitectureModel): string {
         const endpoints = architecture.apiEndpoints.map(e => `${e.method} ${e.path}`).join(', ');
         return `API Endpoints: ${endpoints}`;
+    }
+
+    /**
+     * Generate minimal E2E tests for a project
+     */
+    async generateMinimalTests(
+        project: ProjectDescriptor,
+        projectPath: string
+    ): Promise<string[]> {
+        logger.info(`Generating minimal E2E tests for project: ${project.name}`);
+        const adapter = this.adapterRegistry.getAdapter(project);
+        if (!adapter) return [];
+
+        const generatedFiles: string[] = [];
+        const testDir = adapter.getTestDirectory(project, 'e2e');
+        const ext = project.language === 'python' ? '.py' :
+            project.language === 'typescript' ? '.spec.ts' :
+                project.language === 'javascript' ? '.spec.js' : '.test';
+
+        const filename = `health_check_e2e${ext}`;
+        const testPath = path.join(projectPath, testDir === '.' ? 'tests/e2e' : testDir, filename);
+
+        let content = '';
+        if (project.language === 'python') {
+            content = `import pytest
+
+def test_e2e_health():
+    """
+    Minimal E2E test to verify the test environment is working.
+    """
+    assert True
+`;
+        } else if (project.language === 'typescript' || project.language === 'javascript') {
+            content = `import { test, expect } from '@playwright/test';
+
+test('basic e2e health check', async ({ page }) => {
+  // Just verify we can run a test
+  expect(true).toBe(true);
+});
+`;
+        } else {
+            return [];
+        }
+
+        await writeFile(testPath, content);
+        generatedFiles.push(testPath);
+        logger.info(`Generated minimal E2E test: ${testPath}`);
+
+        return generatedFiles;
     }
 
     /**

@@ -57,6 +57,40 @@ export class PythonEnvironmentHealer extends EnvironmentHealer {
                     command: 'echo "pytest" >> requirements.txt'
                 }]);
             }
+
+            // Check for pytest
+            if (!content.includes('pytest')) {
+                this.addIssue(
+                    project.name,
+                    'analysis',
+                    'warning',
+                    'MISSING_PYTEST_DEP',
+                    'pytest not listed in requirements.txt',
+                    'pytest'
+                );
+                this.addRemediation('MISSING_PYTEST_DEP', [{
+                    title: 'Add pytest',
+                    description: 'Add pytest to requirements.txt',
+                    command: 'echo "pytest" >> requirements.txt'
+                }]);
+            }
+
+            // Check for httpx if FastAPI is in requirements (for TestClient)
+            if (content.includes('fastapi') && !content.includes('httpx')) {
+                this.addIssue(
+                    project.name,
+                    'analysis',
+                    'error',
+                    'MISSING_HTTPX',
+                    'httpx not listed in requirements.txt but required for FastAPI TestClient',
+                    'httpx'
+                );
+                this.addRemediation('MISSING_HTTPX', [{
+                    title: 'Add httpx',
+                    description: 'Add httpx to requirements.txt for FastAPI testing',
+                    command: 'echo "httpx" >> requirements.txt'
+                }]);
+            }
         }
 
         // 3. Check Pytest Config
@@ -120,7 +154,19 @@ export class PythonEnvironmentHealer extends EnvironmentHealer {
             }
 
             // Ensure pytest is installed
-            await this.ensurePytestInstalled(projectPath);
+            const pytestIssue = this.issues.find(i => i.code === 'MISSING_PYTEST_DEP' && !i.autoFixed);
+            if (pytestIssue) {
+                await this.installPackage(projectPath, 'pytest', pytestIssue.code);
+            } else {
+                // Just ensure it's installed even if not in requirements (legacy behavior)
+                await this.ensurePytestInstalled(projectPath);
+            }
+
+            // Install httpx if needed
+            const httpxIssue = this.issues.find(i => i.code === 'MISSING_HTTPX' && !i.autoFixed);
+            if (httpxIssue) {
+                await this.installPackage(projectPath, 'httpx', httpxIssue.code);
+            }
         }
 
         // 3. Create pytest.ini
@@ -325,7 +371,7 @@ python_files = test_*.py
             }
         }
     }
-    private async installPackage(projectPath: string, packageName: string, issueCode: string): Promise<void> {
+    public async installPackage(projectPath: string, packageName: string, issueCode: string): Promise<void> {
         const pipCmd = path.join('.venv', 'bin', 'pip');
         // Fallback to python3 -m pip if venv pip doesn't exist?
         // For now assume venv structure.
@@ -338,6 +384,19 @@ python_files = test_*.py
         );
 
         if (action.success) {
+            // Also update requirements.txt
+            const reqPath = path.join(projectPath, 'requirements.txt');
+            if (await fileExists(reqPath)) {
+                const content = await readFile(reqPath);
+                if (!content.includes(packageName)) {
+                    await writeFile(reqPath, content.trim() + '\n' + packageName + '\n');
+                    logger.info(`Added ${packageName} to requirements.txt`);
+                }
+            } else {
+                await writeFile(reqPath, packageName + '\n');
+                logger.info(`Created requirements.txt with ${packageName}`);
+            }
+
             this.markIssueFixed(issueCode, [action]);
         }
     }

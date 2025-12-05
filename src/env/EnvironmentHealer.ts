@@ -19,6 +19,10 @@ export abstract class EnvironmentHealer {
         this.commandRunner = new CommandRunner();
     }
 
+    public getConfig(): BotConfig {
+        return this.config;
+    }
+
     /**
      * Analyze the project for environment issues
      */
