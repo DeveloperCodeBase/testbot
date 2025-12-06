@@ -104,6 +104,19 @@ npm run build
 npm run self-check  # Validates the bot on itself
 ```
 
+### Environment auto-loading (no manual `source .env`)
+
+The CLI and programmatic entrypoints now eagerly load environment variables from multiple locations so you never need to run
+`set -a; source .env` manually. The loader checks, in order:
+
+1. The target repository path you pass to `analyze` (e.g., `~/code/my-service/.env`)
+2. The current working directory
+3. The packaged root (`./.env` next to the compiled binaries)
+4. A user-level override: `~/.testbot.env`
+
+If `OPENROUTER_API_KEY` is still missing after scanning these paths, the CLI exits with a remediation message that lists every
+location it attempted so you can quickly drop the key in the right place.
+
 ### Alternative: Premium Mode
 
 For maximum quality (higher cost ~$2-5/run):

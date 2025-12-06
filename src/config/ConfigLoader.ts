@@ -38,6 +38,15 @@ export class ConfigLoader {
     private modelsRequested: ConfigDiagnostics['modelsRequested'] = {};
     private fallbacksApplied: ConfigDiagnostics['fallbacksApplied'] = [];
     private configIssues: JobIssue[] = []; // Track config issues
+    private resolvedModels: ConfigDiagnostics['modelsResolved'] = {
+        default: '',
+        planner: undefined,
+        coder: undefined,
+        long_context: undefined,
+        helper: undefined,
+        fallback: undefined,
+        secondary_fallback: undefined,
+    };
 
     // Safe paid model defaults
     private readonly SAFE_DEFAULTS = {
@@ -92,15 +101,7 @@ export class ConfigLoader {
         return {
             configSource: this.configSource,
             modelsRequested: this.modelsRequested,
-            modelsResolved: {
-                default: this.SAFE_DEFAULTS.default,
-                planner: this.SAFE_DEFAULTS.planner,
-                coder: this.SAFE_DEFAULTS.coder,
-                long_context: this.SAFE_DEFAULTS.long_context,
-                helper: this.SAFE_DEFAULTS.helper,
-                fallback: this.SAFE_DEFAULTS.fallback,
-                secondary_fallback: this.SAFE_DEFAULTS.secondary_fallback
-            },
+            modelsResolved: this.resolvedModels,
             fallbacksApplied: this.fallbacksApplied,
             issues: this.configIssues
         };
@@ -294,6 +295,17 @@ export class ConfigLoader {
         config.llm.models.coder = resolveModel(config.llm.models.coder, 'coder', this.SAFE_DEFAULTS.coder);
         config.llm.models.long_context = resolveModel(config.llm.models.long_context, 'long_context', this.SAFE_DEFAULTS.long_context);
         config.llm.models.helper = resolveModel(config.llm.models.helper, 'helper', this.SAFE_DEFAULTS.helper);
+
+        // Capture resolved models for diagnostics and PR reporting
+        this.resolvedModels = {
+            default: config.llm.model,
+            planner: config.llm.models.planner,
+            coder: config.llm.models.coder,
+            long_context: config.llm.models.long_context,
+            helper: config.llm.models.helper,
+            fallback: this.SAFE_DEFAULTS.fallback,
+            secondary_fallback: this.SAFE_DEFAULTS.secondary_fallback,
+        };
 
         // Log summary if any fallbacks were applied
         if (this.fallbacksApplied.length > 0) {

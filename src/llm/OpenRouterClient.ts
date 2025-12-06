@@ -17,7 +17,8 @@ export class LLMError extends Error {
         public modelId: string,
         public task?: string,
         public rawMessage?: string,
-        public suggestedRemediation?: string
+        public suggestedRemediation?: string,
+        public statusCode?: number
     ) {
         super(message);
         this.name = 'LLMError';
@@ -32,7 +33,7 @@ export class OpenRouterClient {
     private secondaryFallbackModel: string;
     private modelCache: Map<string, boolean> = new Map(); // Cache for validated models
     private lastModelUsed: string = ''; // Track final model used for reporting
-    private fallbackEvents: Array<{ model: string; reason: string; timestamp: string }> = [];
+    private fallbackEvents: Array<{ model: string; reason: string; timestamp: string; attemptedModel: string; failureCode?: number }> = [];
 
     constructor(apiKey: string, baseUrl?: string, appName?: string, fallbackModel?: string) {
         this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
@@ -60,7 +61,7 @@ export class OpenRouterClient {
     /**
      * Get recorded fallback events
      */
-    getFallbackEvents(): Array<{ model: string; reason: string; timestamp: string }> {
+    getFallbackEvents(): Array<{ model: string; reason: string; timestamp: string; attemptedModel: string; failureCode?: number }> {
         return this.fallbackEvents;
     }
 
@@ -146,7 +147,9 @@ export class OpenRouterClient {
                         this.fallbackEvents.push({
                             model: this.fallbackModel,
                             reason: `Primary model ${model} failed: ${error.message}`,
-                            timestamp: new Date().toISOString()
+                            timestamp: new Date().toISOString(),
+                            attemptedModel: model,
+                            failureCode: error.statusCode
                         });
                         try {
                             const result = await this.makeRequest(this.fallbackModel, messages, task);
@@ -163,7 +166,9 @@ export class OpenRouterClient {
                                 this.fallbackEvents.push({
                                     model: this.secondaryFallbackModel,
                                     reason: `Primary and fallback models failed. Primary: ${model}, Fallback: ${this.fallbackModel}`,
-                                    timestamp: new Date().toISOString()
+                                    timestamp: new Date().toISOString(),
+                                    attemptedModel: model,
+                                    failureCode: error.statusCode
                                 });
                                 try {
                                     const result = await this.makeRequest(this.secondaryFallbackModel, messages, task);
@@ -256,6 +261,8 @@ export class OpenRouterClient {
             let category = LLMErrorCategory.UNKNOWN;
             let remediation = '';
 
+            const llmStatus = typeof status === 'number' ? status : undefined;
+
             if (status === 401 || status === 403 || errorMessage.includes('User not found')) {
                 category = LLMErrorCategory.AUTH_ERROR;
                 remediation = 'Check your OPENROUTER_API_KEY in .env or environment.';
@@ -279,7 +286,8 @@ export class OpenRouterClient {
                 model,
                 task,
                 rawMessage,
-                remediation
+                remediation,
+                llmStatus
             );
         }
 

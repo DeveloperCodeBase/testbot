@@ -2,6 +2,7 @@ import { ConfigLoader } from './config/ConfigLoader';
 import { JobOrchestrator } from './orchestrator/JobOrchestrator';
 import { ReportGenerator } from './reporter/ReportGenerator';
 import logger from './utils/logger';
+import { EnvLoader } from './utils/EnvLoader';
 require('dotenv').config();
 /**
  * Main entry point for programmatic usage
@@ -9,6 +10,10 @@ require('dotenv').config();
 export async function runTestBot(repoInput: string, configPath?: string) {
     try {
         logger.info('Starting test bot...');
+
+        // Eagerly load environment variables from likely locations including the target repo
+        const envLoader = new EnvLoader();
+        envLoader.load(repoInput);
 
         // Load configuration
         const configLoader = new ConfigLoader();

@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 
-import * as dotenv from 'dotenv';
 import path from 'path';
-import fs from 'fs';
 import { Command } from 'commander';
 import { ConfigLoader } from '../config/ConfigLoader';
 import { JobOrchestrator } from '../orchestrator/JobOrchestrator';
@@ -10,27 +8,11 @@ import { ReportGenerator } from '../reporter/ReportGenerator';
 import logger from '../utils/logger';
 import { BotConfig } from '../config/schema';
 import { printStartupDiagnostics } from './diagnostics';
+import { EnvLoader } from '../utils/EnvLoader';
 
-// Robust .env loading - try multiple locations
-const envPaths = [
-    path.resolve(__dirname, '../../.env'),
-    path.resolve(process.cwd(), '.env'),
-    path.join(process.env.HOME || '~', '.testbot.env')
-];
-
-let envLoaded = false;
-for (const envPath of envPaths) {
-    if (fs.existsSync(envPath)) {
-        dotenv.config({ path: envPath });
-        logger.info(`✅ Loaded .env from: ${envPath}`);
-        envLoaded = true;
-        break;
-    }
-}
-
-if (!envLoaded) {
-    logger.warn('⚠️  No .env file found in standard locations');
-}
+// Load env from standard locations immediately so CLI validation works
+const startupEnvLoader = new EnvLoader();
+const startupEnvLoad = startupEnvLoader.load();
 
 const program = new Command();
 
@@ -59,12 +41,17 @@ program
 
 async function analyzeAction(repo: string, options: any) {
     try {
+        // Attempt to pull env vars from the target repository as well
+        const repoEnvLoader = new EnvLoader();
+        const repoEnvLoad = repoEnvLoader.load(repo);
+
         // Validate OpenRouter API key early
         if (!process.env.OPENROUTER_API_KEY) {
             console.error('\n❌ ERROR: OPENROUTER_API_KEY is not set');
             console.error('\nPlease create a .env file in the project root with:');
             console.error('  OPENROUTER_API_KEY=your_api_key_here');
             console.error('\nGet your API key at: https://openrouter.ai');
+            console.error(`\nEnv files tried: ${[...startupEnvLoad.tried, ...repoEnvLoad.tried].join(', ')}`);
             process.exit(1);
         }
 

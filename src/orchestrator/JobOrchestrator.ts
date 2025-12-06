@@ -202,6 +202,15 @@ export class JobOrchestrator {
                     const msg = `No tests generated for project ${project.name}. Check: LLM configuration, source file discovery, or generation errors above.`;
                     logger.warn(msg);
                     this.errors.push(msg);
+                    this.jobIssues.push({
+                        id: `${project.name}-no-tests-${Date.now()}`,
+                        project: project.name,
+                        stage: 'generate',
+                        kind: 'NO_TESTS_GENERATED',
+                        severity: 'error',
+                        message: msg,
+                        suggestion: 'Verify stack detection and ensure LLM models are reachable; see logs for any upstream errors.'
+                    });
                 }
             } catch (error) {
                 this.handleLLMError(error, project.name, 'generate');
@@ -434,13 +443,14 @@ export class JobOrchestrator {
                 this.jobIssues.push({
                     id: `fallback-${Date.now()}-${Math.random()}`,
                     project: 'all', // Global issue
-                    stage: 'generate',
-                    kind: 'MODEL_FALLBACK',
+                    stage: 'llm',
+                    kind: 'MODEL_FALLBACK_APPLIED',
                     severity: 'warning',
-                    message: `Model fallback occurred: ${event.reason}`,
-                    suggestion: 'Check model availability and rate limits',
-                    details: `Fallback to ${event.model} at ${event.timestamp}`,
-                    modelName: event.model
+                    message: `Model fallback occurred while using ${event.attemptedModel}: ${event.reason}`,
+                    suggestion: 'Check model availability, rate limits, or configure a paid primary model',
+                    details: `Fallback to ${event.model} at ${event.timestamp}${event.failureCode ? ` (status ${event.failureCode})` : ''}`,
+                    modelName: event.model,
+                    taskType: 'generate'
                 });
             });
         }
