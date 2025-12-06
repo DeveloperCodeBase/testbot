@@ -317,6 +317,8 @@ export class StackDetector {
             // Read .csproj to detect framework
             let framework: string | undefined;
             let testFramework = 'xunit'; // Default
+            const baseName = path.basename(projectPath);
+            let isTestProject = /\.Tests$/i.test(baseName);
 
             try {
                 const content = await readFile(csprojFile);
@@ -325,10 +327,20 @@ export class StackDetector {
                 else if (content.includes('NUnit')) testFramework = 'nunit';
                 else if (content.includes('MSTest')) testFramework = 'mstest';
 
+                // If the project already references a test framework or marks itself as test, skip generation
+                if (content.includes('<IsTestProject>true</IsTestProject>') || /TestProjectTypeId/i.test(content)) {
+                    isTestProject = true;
+                }
+
                 // Detect framework (ASP.NET Core, etc.)
                 if (content.includes('Microsoft.AspNetCore')) framework = 'aspnetcore';
             } catch (error) {
                 logger.warn(`Failed to read .csproj file at ${csprojFile}: ${error}`);
+            }
+
+            if (isTestProject) {
+                logger.info(`Skipping C# test project detected at ${csprojFile}`);
+                continue;
             }
 
             projects.push({
