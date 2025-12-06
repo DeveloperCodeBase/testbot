@@ -178,6 +178,7 @@ export class PytestAutoFixLoop {
         if (output.match(/pytest: command not found/i)) return 'MISSING_PYTEST';
         if (output.match(/No module named pytest/i)) return 'MISSING_PYTEST';
         if (output.match(/usage: pytest/i) && output.match(/error:/i)) return 'CONFIG_ERROR';
+        if (output.match(/AssertionError/i)) return 'ASSERTION_ERROR';
 
         return 'UNKNOWN_ERROR';
     }
@@ -210,6 +211,9 @@ export class PytestAutoFixLoop {
             case 'SYNTAX_ERROR':
                 logger.warn('Syntax error detected during execution');
                 return false;
+
+            case 'ASSERTION_ERROR':
+                return await this.fixAssertionError(project, projectPath, healer, errorOutput);
 
             default:
                 logger.warn(`Unknown issue type: ${issueType}`);
@@ -533,5 +537,87 @@ Return the corrected test file content. Do not include any explanation, just the
         );
         await healer.heal(projectPath);
         return true;
+    }
+    /**
+     * Fix AssertionErrors by regenerating the failing test
+     */
+    private async fixAssertionError(
+        _project: ProjectDescriptor,
+        projectPath: string,
+        healer: EnvironmentHealer,
+        errorOutput: string
+    ): Promise<boolean> {
+        logger.info('Detected AssertionError in tests');
+
+        // Extract failing test file
+        // Pattern: test_file.py:123: AssertionError
+        const testFileMatch = errorOutput.match(/([^\s]+\.py):(\d+): AssertionError/);
+
+        if (!testFileMatch) {
+            logger.warn('Could not extract test file from AssertionError');
+            return false;
+        }
+
+        const testFile = testFileMatch[1];
+        logger.info(`AssertionError in ${testFile}`);
+
+        // Ensure we have the correct path
+        let absoluteTestPath = testFile;
+        if (!path.isAbsolute(testFile)) {
+            absoluteTestPath = path.join(projectPath, testFile);
+        }
+
+        try {
+            const { readFile, writeFile, fileExists } = await import('../utils/fileUtils');
+
+            if (!(await fileExists(absoluteTestPath))) {
+                logger.warn(`Test file not found: ${absoluteTestPath}`);
+                return false;
+            }
+
+            const testContent = await readFile(absoluteTestPath);
+
+            // Regenerate test using LLM
+            const config = healer.getConfig();
+            const client = new OpenRouterClient(config.llm.api_key || '');
+            const model = config.llm.models?.coder || config.llm.model;
+
+            const prompt = `
+You are an expert Python developer. A Pytest test is failing with an AssertionError.
+Your task is to fix the test code to match the actual behavior or correct the assertion logic.
+
+Failing Test Code:
+\`\`\`python
+${testContent}
+\`\`\`
+
+Error Message:
+${errorOutput}
+
+Return the corrected test file content. Do not include any explanation, just the code block.
+`;
+
+            logger.info(`Regenerating test ${testFile} using LLM...`);
+
+            const messages: LLMMessage[] = [
+                { role: 'system' as const, content: 'You are an expert Python developer. Fix the failing test.' },
+                { role: 'user' as const, content: prompt }
+            ];
+
+            const response = await client.chatCompletion(model, messages, 'fix-assertion');
+
+            // Extract code block
+            const codeMatch = response.match(/```python\n([\s\S]*?)```/) || response.match(/```\n([\s\S]*?)```/);
+            const newContent = codeMatch ? codeMatch[1] : response;
+
+            await writeFile(absoluteTestPath, newContent);
+            logger.info(`Regenerated test file ${testFile}`);
+
+            return true;
+
+        } catch (error) {
+            logger.error(`Failed to regenerate test: ${error}`);
+            return false;
+        }
     }
 }

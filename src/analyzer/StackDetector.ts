@@ -157,7 +157,7 @@ export class StackDetector {
             });
 
             // Only create project if there are actual source files
-            if (sourceFiles.length === 0) {
+            if (!sourceFiles || sourceFiles.length === 0) {
                 logger.info(`Skipping Python project at ${projectPath}: no app source files found (only config/test files)`);
                 continue;
             }

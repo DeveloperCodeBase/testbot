@@ -2,15 +2,35 @@
 
 import * as dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { Command } from 'commander';
 import { ConfigLoader } from '../config/ConfigLoader';
 import { JobOrchestrator } from '../orchestrator/JobOrchestrator';
 import { ReportGenerator } from '../reporter/ReportGenerator';
 import logger from '../utils/logger';
 import { BotConfig } from '../config/schema';
+import { printStartupDiagnostics } from './diagnostics';
 
-// Load .env from repo root if present
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+// Robust .env loading - try multiple locations
+const envPaths = [
+    path.resolve(__dirname, '../../.env'),
+    path.resolve(process.cwd(), '.env'),
+    path.join(process.env.HOME || '~', '.testbot.env')
+];
+
+let envLoaded = false;
+for (const envPath of envPaths) {
+    if (fs.existsSync(envPath)) {
+        dotenv.config({ path: envPath });
+        logger.info(`✅ Loaded .env from: ${envPath}`);
+        envLoaded = true;
+        break;
+    }
+}
+
+if (!envLoaded) {
+    logger.warn('⚠️  No .env file found in standard locations');
+}
 
 const program = new Command();
 
@@ -39,7 +59,16 @@ program
 
 async function analyzeAction(repo: string, options: any) {
     try {
-        logger.info('Starting test bot...');
+        // Validate OpenRouter API key early
+        if (!process.env.OPENROUTER_API_KEY) {
+            console.error('\n❌ ERROR: OPENROUTER_API_KEY is not set');
+            console.error('\nPlease create a .env file in the project root with:');
+            console.error('  OPENROUTER_API_KEY=your_api_key_here');
+            console.error('\nGet your API key at: https://openrouter.ai');
+            process.exit(1);
+        }
+
+        console.log('\n🤖 Autonomous Test Bot Starting...\n');
 
         // Load configuration
         const configLoader = new ConfigLoader();
@@ -48,8 +77,16 @@ async function analyzeAction(repo: string, options: any) {
         // Apply CLI options
         config = applyCliOptions(config, options);
 
+        // Print startup diagnostics
+        printStartupDiagnostics(config, options);
+
+        logger.info('Starting test bot execution...');
+
+        // Get config diagnostics
+        const configDiagnostics = configLoader.getDiagnostics();
+
         // Execute job
-        const orchestrator = new JobOrchestrator(config);
+        const orchestrator = new JobOrchestrator(config, configDiagnostics);
         const result = await orchestrator.execute(repo);
 
         // Generate reports

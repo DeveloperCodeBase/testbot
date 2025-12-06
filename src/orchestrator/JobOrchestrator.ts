@@ -15,6 +15,7 @@ import { CSharpEnvironmentHealer } from '../env/CSharpEnvironmentHealer';
 import { EnvironmentIssue, AutoFixAction } from '../models/EnvironmentModels';
 import { ProjectDescriptor } from '../models/ProjectDescriptor';
 import { LLMError, LLMErrorCategory } from '../llm/OpenRouterClient';
+import { ConfigDiagnostics } from '../config/ConfigLoader';
 import path from 'path';
 
 /**
@@ -43,10 +44,28 @@ export class JobOrchestrator {
     private errors: string[] = [];
     private jobIssues: JobIssue[] = []; // Collects LLM and other global issues
     private testGenerator?: TestGenerator; // Track for LLM usage stats
+    private configDiagnostics?: ConfigDiagnostics; // Track config source and model resolution
 
-    constructor(config: BotConfig) {
+    constructor(config: BotConfig, configDiagnostics?: ConfigDiagnostics) {
         this.config = config;
         this.repoManager = new RepoManager();
+        this.configDiagnostics = configDiagnostics;
+
+        // Create CONFIG_MODEL_OVERRIDE issues if any fallbacks were applied
+        if (configDiagnostics?.fallbacksApplied && configDiagnostics.fallbacksApplied.length > 0) {
+            configDiagnostics.fallbacksApplied.forEach(fallback => {
+                this.jobIssues.push({
+                    id: `config-model-override-${fallback.field}`,
+                    project: 'all',
+                    stage: 'env_heal',
+                    kind: 'CONFIG_MODEL_OVERRIDE',
+                    severity: 'warning',
+                    message: `Model '${fallback.field}' was overridden: ${fallback.original} → ${fallback.resolved}`,
+                    suggestion: `Update your config file to use paid models directly`,
+                    details: fallback.reason
+                });
+            });
+        }
     }
 
     /**
@@ -408,6 +427,24 @@ export class JobOrchestrator {
             };
         }
 
+        // Aggregate fallback events
+        if (this.testGenerator) {
+            const fallbackEvents = this.testGenerator.getFallbackEvents();
+            fallbackEvents.forEach(event => {
+                this.jobIssues.push({
+                    id: `fallback-${Date.now()}-${Math.random()}`,
+                    project: 'all', // Global issue
+                    stage: 'generate',
+                    kind: 'MODEL_FALLBACK',
+                    severity: 'warning',
+                    message: `Model fallback occurred: ${event.reason}`,
+                    suggestion: 'Check model availability and rate limits',
+                    details: `Fallback to ${event.model} at ${event.timestamp}`,
+                    modelName: event.model
+                });
+            });
+        }
+
         // Combine all issues
         const issues = [
             ...this.jobIssues,
@@ -437,7 +474,8 @@ export class JobOrchestrator {
                 reason,
             },
             issues,
-            llmUsage
+            llmUsage,
+            modelDiagnostics: this.configDiagnostics
         };
     }
 
@@ -472,8 +510,8 @@ export class JobOrchestrator {
     }
 
     /**
-     * Convert EnvironmentIssues to JobIssues and add coverage issues
-     */
+    * Convert EnvironmentIssues to JobIssues and add coverage issues
+    */
     private buildJobIssues(
         envIssues: EnvironmentIssue[],
         projectResults: TestRunResult[]
@@ -502,14 +540,33 @@ export class JobOrchestrator {
         // Add coverage issues for projects where coverage wasn't collected
         projectResults.forEach(p => {
             if (!p.coverage || (p.coverage.overall.statements.total === 0 && p.coverage.overall.lines.total === 0)) {
-                issues.push({
-                    project: p.project,
-                    stage: 'coverage',
-                    kind: 'COVERAGE_NOT_COLLECTED',
-                    severity: 'error',
-                    message: 'Tests failed before coverage could be collected',
-                    suggestion: 'Fix test execution errors first, then coverage will be generated'
-                });
+                // Only add if tests actually ran
+                const testsRan = p.testSuites.reduce((sum, s) => sum + s.testsRun, 0);
+                if (testsRan > 0) {
+                    issues.push({
+                        project: p.project,
+                        stage: 'coverage',
+                        kind: 'COVERAGE_NOT_COLLECTED',
+                        severity: 'warning',
+                        message: 'Coverage data was not collected despite tests running',
+                        suggestion: 'Ensure test framework coverage reporting is properly configured'
+                    });
+                }
+            } else if (p.coverage) {
+                // Check coverage threshold
+                const threshold = this.config.coverage.threshold;
+                const actualCoverage = p.coverage.overall.statements.pct || p.coverage.overall.lines.pct || 0;
+
+                if (actualCoverage < threshold) {
+                    issues.push({
+                        project: p.project,
+                        stage: 'coverage',
+                        kind: 'COVERAGE_BELOW_THRESHOLD',
+                        severity: 'warning',
+                        message: `Coverage ${actualCoverage.toFixed(2)}% is below threshold ${threshold}%`,
+                        suggestion: `Generate more comprehensive tests to reach ${threshold}% coverage or lower the threshold in config`
+                    });
+                }
             }
         });
 

@@ -24,7 +24,7 @@ describe('OpenRouterClient', () => {
     it('should set apiKey, baseUrl and appName properties', () => {
       expect(typeof (client as any).apiKey).toBe('string');
       expect((client as any).baseUrl).toBe('https://openrouter.ai/api/v1');
-      expect((client as any).appName).toBe('testbot1');
+      expect((client as any).appName).toBe('ai-testbot');
     });
 
     it('should warn if apiKey is missing', () => {
@@ -75,7 +75,7 @@ describe('OpenRouterClient', () => {
           headers: expect.objectContaining({
             Authorization: expect.stringContaining('Bearer '),
             'Content-Type': 'application/json',
-            'X-Title': 'testbot1',
+            'X-Title': 'ai-testbot',
           }),
           timeout: 60000,
         })

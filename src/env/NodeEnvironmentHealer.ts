@@ -3,6 +3,7 @@ import { EnvironmentHealer } from './EnvironmentHealer';
 import { ProjectDescriptor } from '../models/ProjectDescriptor';
 import { fileExists, readFile, writeFile } from '../utils/fileUtils';
 import logger from '../utils/logger';
+import { ESMDetector } from '../utils/ESMDetector';
 
 /**
  * Healer for Node.js / TypeScript environments
@@ -30,12 +31,17 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
         // 2. Check dependencies
         await this.checkDependencies(project, projectPath, generatedFiles);
 
-        // 3. Check Jest Configuration (if applicable)
+        // 3. Check for ESM dependencies in generated tests (Jest-specific)
+        if (this.isJestProject(project, projectPath)) {
+            await this.checkESMDependencies(project, projectPath, generatedFiles);
+        }
+
+        // 4. Check Jest Configuration (if applicable)
         if (this.isJestProject(project, projectPath)) {
             await this.checkJestConfig(project, projectPath, isTypeScript);
         }
 
-        // 4. Check Vitest Configuration (if applicable)
+        // 5. Check Vitest Configuration (if applicable)
         if (this.isVitestProject(project, projectPath)) {
             await this.checkVitestConfig(project, projectPath, generatedFiles);
         }
@@ -62,6 +68,14 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
                 if (pkg) {
                     await this.installDependency(projectPath, pkg, issue.code);
                 }
+            }
+        }
+
+        // 1.5. Fix ESM dependencies
+        const esmIssues = this.issues.filter(i => i.code === 'JEST_ESM_DEP_DETECTED' && !i.autoFixed);
+        for (const issue of esmIssues) {
+            if (this.canUpdateConfig()) {
+                await this.fixESMDependencies(projectPath, issue.code);
             }
         }
 
@@ -352,6 +366,129 @@ export class NodeEnvironmentHealer extends EnvironmentHealer {
                 );
             }
         }
+    }
+
+    /**
+     * Check for ESM-only dependencies in generated test files
+     */
+    private async checkESMDependencies(
+        project: ProjectDescriptor,
+        _projectPath: string,
+        generatedFiles: string[]
+    ): Promise<void> {
+        logger.info('Checking for ESM-only dependencies in generated tests');
+
+        // Detect ESM imports across all generated files
+        const esmResults = await ESMDetector.detectESMImportsInFiles(generatedFiles);
+
+        if (esmResults.size > 0) {
+            const allESMPackages = new Set<string>();
+            for (const packages of esmResults.values()) {
+                packages.forEach(pkg => allESMPackages.add(pkg));
+            }
+
+            this.addIssue(
+                project.name,
+                'analysis',
+                'warning',
+                'JEST_ESM_DEP_DETECTED',
+                `ESM-only dependencies detected in generated tests: ${Array.from(allESMPackages).join(', ')}`,
+                Array.from(allESMPackages).join(', ')
+            );
+
+            this.addRemediation('JEST_ESM_DEP_DETECTED', [{
+                title: 'Fix ESM dependencies for Jest',
+                description: 'Configure transformIgnorePatterns in jest.config to handle ESM packages',
+            }]);
+
+            logger.info(`Detected ${allESMPackages.size} ESM-only package(s): ${Array.from(allESMPackages).join(', ')}`);
+        }
+    }
+
+    /**
+     * Fix ESM dependencies by modifying jest.config.cjs
+     */
+    private async fixESMDependencies(projectPath: string, issueCode: string): Promise<void> {
+        const jestConfigPath = path.join(projectPath, 'jest.config.cjs');
+        const jestConfigPathJS = path.join(projectPath, 'jest.config.js');
+
+        const configPath = await fileExists(jestConfigPath) ? jestConfigPath :
+            await fileExists(jestConfigPathJS) ? jestConfigPathJS : null;
+
+        if (!configPath) {
+            logger.warn('No Jest config found, cannot apply ESM fix');
+            return;
+        }
+
+        // Get ESM packages from generated files
+        const esmResults = await ESMDetector.detectESMImportsInFiles(this.generatedFiles);
+        const allESMPackages = new Set<string>();
+        for (const packages of esmResults.values()) {
+            packages.forEach(pkg => allESMPackages.add(pkg));
+        }
+
+        if (allESMPackages.size === 0) return;
+
+        let content = await readFile(configPath);
+        const packageList = Array.from(allESMPackages);
+
+        // Generate transformIgnorePatterns
+        const transformPattern = ESMDetector.generateTransformIgnorePattern(packageList);
+
+        // Check if transformIgnorePatterns already exists
+        if (content.includes('transformIgnorePatterns')) {
+            // Update existing transformIgnorePatterns
+            logger.info('Updating existing transformIgnorePatterns in Jest config');
+            // Find the array and add our pattern
+            const regex = /transformIgnorePatterns:\s*\[([\s\S]*?)\]/;
+            const match = content.match(regex);
+            if (match) {
+                const existingPatterns = match[1].trim();
+                if (!existingPatterns.includes(transformPattern.replace(/'/g, ''))) {
+                    // Add our pattern to the existing ones
+                    content = content.replace(
+                        regex,
+                        `transformIgnorePatterns: [\n    ${transformPattern},\n    ${existingPatterns}\n  ]`
+                    );
+                }
+            }
+        } else {
+            // Add transformIgnorePatterns
+            logger.info('Adding transformIgnorePatterns to Jest config');
+            // Add after testMatch or roots or at the end of config object
+            if (content.includes('testMatch:')) {
+                content = content.replace(
+                    /testMatch:\s*\[[\s\S]*?\],/,
+                    `$&\n\n  // ESM package handling\n  transformIgnorePatterns: [\n    ${transformPattern}\n  ],`
+                );
+            } else if (content.includes('roots:')) {
+                content = content.replace(
+                    /roots:\s*\[[\s\S]*?\],/,
+                    `$&\n\n  // ESM package handling\n  transformIgnorePatterns: [\n    ${transformPattern}\n  ],`
+                );
+            } else {
+                // Add at the end of module.exports object
+                content = content.replace(
+                    /};\s*$/,
+                    `\n  // ESM package handling\n  transformIgnorePatterns: [\n    ${transformPattern}\n  ]\n};\n`
+                );
+            }
+        }
+
+        await writeFile(configPath, content);
+
+        const action = {
+            project: path.basename(projectPath),
+            path: configPath,
+            command: 'update-jest-config',
+            description: `Added ESM handling for packages: ${packageList.join(', ')}`,
+            success: true,
+            timestamp: new Date().toISOString()
+        };
+        this.actions.push(action);
+        this.markIssueFixed(issueCode, [action]);
+
+        logger.info(`✅ Fixed ESM dependencies in ${configPath}`);
     }
 
     private async checkJestConfig(project: ProjectDescriptor, projectPath: string, isTypeScript: boolean): Promise<void> {

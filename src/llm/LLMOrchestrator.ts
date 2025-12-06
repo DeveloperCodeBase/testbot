@@ -167,6 +167,13 @@ export class LLMOrchestrator {
     }
 
     /**
+     * Get fallback events
+     */
+    getFallbackEvents() {
+        return this.openRouterClient.getFallbackEvents();
+    }
+
+    /**
      * Generate tests using LLM
      */
     async generateTests(request: LLMRequest): Promise<LLMResponse> {

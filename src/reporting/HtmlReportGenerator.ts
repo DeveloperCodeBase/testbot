@@ -29,6 +29,7 @@ export class HtmlReportGenerator {
     <div class="container">
         ${this.buildHeader(result)}
         ${this.buildSummary(result)}
+        ${this.buildIssuesSection(result)}
         ${this.buildProjectSection(result)}
         ${this.buildEnvironmentSection(result)}
         ${this.buildFooter(result)}
@@ -89,6 +90,96 @@ export class HtmlReportGenerator {
                 </div>
             </div>
             ${summary.reason ? `<div class="alert warning"><strong>Note:</strong> ${summary.reason}</div>` : ''}
+        </section>`;
+    }
+
+    private buildIssuesSection(result: JobResult): string {
+        if (!result.issues || result.issues.length === 0) {
+            return '';
+        }
+
+        // Group issues by severity
+        const errors = result.issues.filter(i => i.severity === 'error');
+        const warnings = result.issues.filter(i => i.severity === 'warning');
+        const infos = result.issues.filter(i => i.severity === 'info');
+
+        const getSeverityIcon = (severity: string) => {
+            switch (severity) {
+                case 'error': return '🔴';
+                case 'warning': return '⚠️';
+                case 'info': return '💡';
+                default: return '•';
+            }
+        };
+
+        const buildIssueCard = (issue: any) => {
+            // Find matching auto-fix actions for this issue
+            const relatedActions = result.autoFixActions.filter(action =>
+                action.project === issue.project &&
+                action.description.toLowerCase().includes(issue.kind.toLowerCase())
+            );
+
+            return `
+            <div class="issue-card ${issue.severity}">
+                <div class="issue-header-line">
+                    <span class="issue-severity-icon">${getSeverityIcon(issue.severity)}</span>
+                    <span class="issue-project-badge">${issue.project}</span>
+                    <span class="issue-stage-badge">${issue.stage}</span>
+                    <span class="issue-kind-badge">${issue.kind}</span>
+                </div>
+                <div class="issue-message">${issue.message}</div>
+                ${issue.details ? `<div class="issue-details"><strong>Details:</strong> ${issue.details}</div>` : ''}
+                ${issue.suggestion ? `
+                <div class="issue-suggestion">
+                    <strong>💡 Suggestion:</strong> ${issue.suggestion}
+                </div>
+                ` : ''}
+                ${relatedActions.length > 0 ? `
+                <div class="issue-fixes">
+                    <strong>🔧 Auto-Fix Applied:</strong>
+                    ${relatedActions.map(action => `
+                    <div class="fix-action ${action.success ? 'success' : 'failed'}">
+                        ${action.success ? '✅' : '❌'} ${action.description}
+                        ${action.command ? `<code>${action.command}</code>` : ''}
+                    </div>
+                    `).join('')}
+                </div>
+                ` : ''}
+                ${issue.modelName ? `<div class="issue-llm"><strong>Model:</strong> ${issue.modelName} ${issue.taskType ? `(${issue.taskType})` : ''}</div>` : ''}
+            </div>`;
+        };
+
+        return `
+        <section class="issues-section">
+            <h2>🚨 Issues & Diagnostics</h2>
+            <div class="issues-summary">
+                ${errors.length > 0 ? `<div class="issue-count error-count">❌ ${errors.length} Error${errors.length > 1 ? 's' : ''}</div>` : ''}
+                ${warnings.length > 0 ? `<div class="issue-count warning-count">⚠️ ${warnings.length} Warning${warnings.length > 1 ? 's' : ''}</div>` : ''}
+                ${infos.length > 0 ? `<div class="issue-count info-count">💡 ${infos.length} Info</div>` : ''}
+            </div>
+            
+            ${errors.length > 0 ? `
+            <div class="issues-group">
+                <h3 class="issues-group-title error-title">Errors</h3>
+                ${errors.map(issue => buildIssueCard(issue)).join('')}
+            </div>
+            ` : ''}
+            
+            ${warnings.length > 0 ? `
+            <div class="issues-group">
+                <h3 class="issues-group-title warning-title">Warnings</h3>
+                ${warnings.slice(0, 10).map(issue => buildIssueCard(issue)).join('')}
+                ${warnings.length > 10 ? `<div class="alert info">...and ${warnings.length - 10} more warnings. See JSON report for complete list.</div>` : ''}
+            </div>
+            ` : ''}
+            
+            ${infos.length > 0 ? `
+            <div class="issues-group">
+                <h3 class="issues-group-title info-title">Informational</h3>
+                ${infos.slice(0, 5).map(issue => buildIssueCard(issue)).join('')}
+                ${infos.length > 5 ? `<div class="alert info">...and ${infos.length - 5} more info items.</div>` : ''}
+            </div>
+            ` : ''}
         </section>`;
     }
 
@@ -363,6 +454,37 @@ export class HtmlReportGenerator {
         .issue.info { background: #dbeafe; border-left: 4px solid #3b82f6; }
         .remediation { margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.5); border-radius: 4px; }
         .remediation-step { margin: 5px 0; }
+        
+        /* Issues Section Styles */
+        .issues-section { background: white; padding: 25px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .issues-summary { display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }
+        .issue-count { padding: 10px 20px; border-radius: 8px; font-weight: 600; }
+        .error-count { background: #fee2e2; color: #991b1b; }
+        .warning-count { background: #fef3c7; color: #92400e; }
+        .info-count { background: #dbeafe; color: #1e40af; }
+        .issues-group { margin-bottom: 25px; }
+        .issues-group-title { font-size: 1.2em; margin-bottom: 15px; }
+        .issues-group-title.error-title { color: #dc2626; }
+        .issues-group-title.warning-title { color: #d97706; }
+        .issues-group-title.info-title { color: #2563eb; }
+        .issue-card { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 15px; margin-bottom: 12px; }
+        .issue-card.error { border-left: 4px solid #ef4444; background: #fef2f2; }
+        .issue-card.warning { border-left: 4px solid #f59e0b; background: #fffbeb; }
+        .issue-card.info { border-left: 4px solid #3b82f6; background: #eff6ff; }
+        .issue-header-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+        .issue-severity-icon { font-size: 1.2em; }
+        .issue-project-badge { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 12px; font-size: 0.85em; font-weight: 600; }
+        .issue-stage-badge { background: #d1fae5; color: #065f46; padding: 4px 10px; border-radius: 12px; font-size: 0.75em; font-weight: 600; }
+        .issue-kind-badge { background: #fce7f3; color: #9f1239; padding: 4px 10px; border-radius: 12px; font-size: 0.75em; font-weight: 600; font-family: 'Courier New', monospace; }
+        .issue-message { font-weight: 600; color: #1f2937; margin-bottom: 8px; }
+        .issue-details { color: #6b7280; font-size: 0.9em; margin: 8px 0; padding: 8px; background: rgba(255,255,255,0.7); border-radius: 4px; }
+        .issue-suggestion { background: #ecfdf5; border-left: 3px solid #10b981; padding: 10px; margin: 10px 0; border-radius: 4px; color: #065f46; }
+        .issue-fixes { background: #f0f9ff; border-left: 3px solid #3b82f6; padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .fix-action { padding: 8px; margin: 5px 0; border-radius: 4px; font-size: 0.9em; }
+        .fix-action.success { background: #d1fae5; color: #065f46; }
+        .fix-action.failed { background: #fee2e2; color: #991b1b; }
+        .issue-llm { font-size: 0.85em; color: #6b7280; margin-top: 8px; font-style: italic; }
+        
         footer { text-align: center; padding: 20px; color: #6b7280; }
         @media (max-width: 768px) {
             .metrics-grid { grid-template-columns: repeat(2, 1fr); }

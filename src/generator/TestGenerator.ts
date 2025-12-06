@@ -6,6 +6,9 @@ import { E2ETestGenerator } from './E2ETestGenerator';
 import { CSharpTestGenerator } from './CSharpTestGenerator';
 import { BotConfig } from '../config/schema';
 import logger from '../utils/logger';
+import path from 'path';
+import { ImportSanityGate } from '../validator/ImportSanityGate';
+import { writeFile, readFile } from '../utils/fileUtils';
 
 /**
  * Coordinates all test generation
@@ -51,7 +54,17 @@ export class TestGenerator {
                 } else {
                     results.unit = await this.unitTestGenerator.generateTests(project, projectPath, architecture);
                 }
-                logger.info(`Generated ${results.unit.length} unit test files`);
+
+                // Validate and fix imports, track skipped files
+                const { written, skipped } = await this.validateAndFixTests(results.unit, projectPath);
+                results.unit = written;
+
+                // Add skipped files to errors
+                skipped.forEach(s => {
+                    results.errors.push(`GENERATION_IMPORT_UNRESOLVABLE: ${path.basename(s.path)} - ${s.reason}`);
+                });
+
+                logger.info(`Generated ${results.unit.length} unit test files (${skipped.length} skipped)`);
             } catch (error) {
                 const errorMsg = `Failed to generate unit tests for ${project.name}: ${error}`;
                 logger.error(errorMsg);
@@ -63,7 +76,17 @@ export class TestGenerator {
         if (this.config.enabled_tests.integration) {
             try {
                 results.integration = await this.integrationTestGenerator.generateTests(project, projectPath, architecture);
-                logger.info(`Generated ${results.integration.length} integration test files`);
+
+                // Validate and fix imports, track skipped files
+                const { written, skipped } = await this.validateAndFixTests(results.integration, projectPath);
+                results.integration = written;
+
+                // Add skipped files to errors
+                skipped.forEach(s => {
+                    results.errors.push(`GENERATION_IMPORT_UNRESOLVABLE: ${path.basename(s.path)} - ${s.reason}`);
+                });
+
+                logger.info(`Generated ${results.integration.length} integration test files (${skipped.length} skipped)`);
             } catch (error) {
                 const errorMsg = `Failed to generate integration tests for ${project.name}: ${error}`;
                 logger.error(errorMsg);
@@ -75,7 +98,17 @@ export class TestGenerator {
         if (this.config.enabled_tests.e2e) {
             try {
                 results.e2e = await this.e2eTestGenerator.generateTests(project, projectPath, architecture);
-                logger.info(`Generated ${results.e2e.length} E2E test files`);
+
+                // Validate and fix imports, track skipped files
+                const { written, skipped } = await this.validateAndFixTests(results.e2e, projectPath);
+                results.e2e = written;
+
+                // Add skipped files to errors
+                skipped.forEach(s => {
+                    results.errors.push(`GENERATION_IMPORT_UNRESOLVABLE: ${path.basename(s.path)} - ${s.reason}`);
+                });
+
+                logger.info(`Generated ${results.e2e.length} E2E test files (${skipped.length} skipped)`);
             } catch (error) {
                 const errorMsg = `Failed to generate E2E tests for ${project.name}: ${error}`;
                 logger.error(errorMsg);
@@ -138,5 +171,70 @@ export class TestGenerator {
             stats: allStats,
             totalTokens
         };
+    }
+
+    /**
+     * Get aggregated fallback events
+     */
+    getFallbackEvents() {
+        return [
+            ...this.unitTestGenerator.getFallbackEvents(),
+            ...this.integrationTestGenerator.getFallbackEvents(),
+            ...this.e2eTestGenerator.getFallbackEvents(),
+            // CSharp generator might not have it yet, but let's assume it does or skip it for now
+            // ...this.csharpTestGenerator.getFallbackEvents(), 
+        ];
+    }
+    /**
+     * Validate and fix imports in generated tests
+     * Returns { written, skipped } to track which files were skipped
+     */
+    private async validateAndFixTests(
+        filePaths: string[],
+        projectPath: string
+    ): Promise<{ written: string[]; skipped: Array<{ path: string; reason: string }> }> {
+        if (!filePaths || filePaths.length === 0) {
+            return { written: [], skipped: [] };
+        }
+
+        logger.info(`Validating imports for ${filePaths.length} generated files...`);
+
+        const written: string[] = [];
+        const skipped: Array<{ path: string; reason: string }> = [];
+
+        for (const filePath of filePaths) {
+            try {
+                const content = await readFile(filePath);
+                const result = await ImportSanityGate.validateOrSkip(filePath, content, projectPath);
+
+                if (!result.shouldWrite) {
+                    // Skip this file - delete it and track the reason
+                    logger.warn(`⚠️  Skipping ${path.basename(filePath)}: ${result.skippedReason}`);
+                    skipped.push({ path: filePath, reason: result.skippedReason! });
+
+                    // Delete the file since it won't work
+                    const fs = await import('fs/promises');
+                    await fs.unlink(filePath);
+                } else if (result.fixedContent) {
+                    // Write fixed content
+                    await writeFile(filePath, result.fixedContent);
+                    written.push(filePath);
+                    logger.info(`✅ Fixed and wrote ${path.basename(filePath)}`);
+                } else {
+                    // File is valid as-is
+                    written.push(filePath);
+                }
+            } catch (error) {
+                logger.warn(`Failed to validate/fix imports for ${filePath}: ${error}`);
+                // Keep the file if validation fails
+                written.push(filePath);
+            }
+        }
+
+        if (skipped.length > 0) {
+            logger.warn(`⚠️  Skipped ${skipped.length} file(s) due to unresolvable imports`);
+        }
+
+        return { written, skipped };
     }
 }

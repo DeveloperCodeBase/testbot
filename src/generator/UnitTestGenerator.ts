@@ -6,6 +6,10 @@ import { BotConfig } from '../config/schema';
 import { writeFile, readFile, findSourceFiles as findSourceFilesUtil } from '../utils/fileUtils';
 import logger from '../utils/logger';
 import path from 'path';
+import { PathNormalizer } from '../utils/PathNormalizer';
+import { ImportSanityGate } from '../validator/ImportSanityGate';
+import { TestQualityGate } from '../validator/TestQualityGate';
+import { JobIssue } from '../models/TestRunResult';
 
 /**
  * Generates unit tests for source files
@@ -13,6 +17,7 @@ import path from 'path';
 export class UnitTestGenerator {
     private llmOrchestrator: LLMOrchestrator;
     private adapterRegistry: AdapterRegistry;
+    private importIssues: JobIssue[] = [];
 
     constructor(config: BotConfig) {
         this.llmOrchestrator = new LLMOrchestrator(config.llm);
@@ -71,14 +76,50 @@ export class UnitTestGenerator {
                     if (filename === 'generated_test') {
                         // Use adapter to determine test path
                         const relativeTestPath = adapter.getTestFilePath(batch[0], 'unit', project);
-                        testPath = path.join(projectPath, relativeTestPath);
+                        testPath = PathNormalizer.normalizeFilePath(projectPath, relativeTestPath);
                     } else {
                         // Normalize filename: strip project name prefix if present
                         const normalizedFilename = this.normalizeFilename(filename, project.name);
-                        testPath = path.join(projectPath, normalizedFilename);
+                        testPath = PathNormalizer.normalizeFilePath(projectPath, normalizedFilename);
                     }
 
-                    await writeFile(testPath, content);
+                    // Validate imports before writing
+                    const validation = await ImportSanityGate.validateOrSkip(testPath, content, projectPath);
+                    if (!validation.shouldWrite) {
+                        logger.warn(`Skipping ${testPath}: ${validation.skippedReason}`);
+                        this.importIssues.push({
+                            project: project.name,
+                            stage: 'generate',
+                            kind: 'GENERATION_IMPORT_UNRESOLVABLE',
+                            severity: 'warning',
+                            message: `Skipped unit test generation: ${validation.skippedReason}`,
+                            suggestion: 'Review import paths in generated test or fix source file structure',
+                            details: validation.issues.join('; ')
+                        });
+                        continue;
+                    }
+
+                    await writeFile(testPath, validation.fixedContent || content);
+
+                    // Quality Gate Check
+                    const qualityResult = await TestQualityGate.checkGeneratedTest(testPath, projectPath);
+                    if (!qualityResult.passed && !qualityResult.fixed) {
+                        this.importIssues.push({
+                            project: project.name,
+                            stage: 'generate',
+                            kind: qualityResult.quarantined ? 'TEST_QUARANTINED' : 'TEST_QUALITY_GATE_FAILED',
+                            severity: 'warning',
+                            message: qualityResult.quarantined ? `Test quarantined due to errors: ${testPath}` : `Test quality gate failed: ${testPath}`,
+                            suggestion: 'Fix TypeScript errors in generated test or review source types',
+                            details: qualityResult.issues.join('; ')
+                        });
+
+                        // If quarantined, do not include in generated list (it is moved)
+                        if (qualityResult.quarantined) {
+                            continue;
+                        }
+                    }
+
                     generatedFiles.push(testPath);
                     logger.info(`Generated unit test: ${testPath}`);
                 }
@@ -136,13 +177,48 @@ export class UnitTestGenerator {
                     let testPath;
                     if (filename === 'generated_test') {
                         const relativeTestPath = adapter.getTestFilePath(batch[0].path, 'unit', project);
-                        testPath = path.join(projectPath, relativeTestPath);
+                        testPath = PathNormalizer.normalizeFilePath(projectPath, relativeTestPath);
                     } else {
                         const normalizedFilename = this.normalizeFilename(filename, project.name);
-                        testPath = path.join(projectPath, normalizedFilename);
+                        testPath = PathNormalizer.normalizeFilePath(projectPath, normalizedFilename);
                     }
 
-                    await writeFile(testPath, content);
+                    // Validate imports before writing
+                    const validation = await ImportSanityGate.validateOrSkip(testPath, content, projectPath);
+                    if (!validation.shouldWrite) {
+                        logger.warn(`Skipping ${testPath}: ${validation.skippedReason}`);
+                        this.importIssues.push({
+                            project: project.name,
+                            stage: 'generate',
+                            kind: 'GENERATION_IMPORT_UNRESOLVABLE',
+                            severity: 'warning',
+                            message: `Skipped targeted unit test: ${validation.skippedReason}`,
+                            suggestion: 'Review import paths or fix source file structure',
+                            details: validation.issues.join('; ')
+                        });
+                        continue;
+                    }
+
+                    await writeFile(testPath, validation.fixedContent || content);
+
+                    // Quality Gate Check
+                    const qualityResult = await TestQualityGate.checkGeneratedTest(testPath, projectPath);
+                    if (!qualityResult.passed && !qualityResult.fixed) {
+                        this.importIssues.push({
+                            project: project.name,
+                            stage: 'generate',
+                            kind: qualityResult.quarantined ? 'TEST_QUARANTINED' : 'TEST_QUALITY_GATE_FAILED',
+                            severity: 'warning',
+                            message: qualityResult.quarantined ? `Test quarantined due to errors: ${testPath}` : `Test quality gate failed: ${testPath}`,
+                            suggestion: 'Fix TypeScript errors in generated test or review source types',
+                            details: qualityResult.issues.join('; ')
+                        });
+
+                        if (qualityResult.quarantined) {
+                            continue;
+                        }
+                    }
+
                     generatedFiles.push(testPath);
                     logger.info(`Generated targeted unit test: ${testPath}`);
                 }
@@ -208,5 +284,19 @@ Build Tool: ${project.buildTool || 'None'}`;
             return segments.slice(1).join(path.sep);
         }
         return filename;
+    }
+
+    /**
+     * Get fallback events
+     */
+    getFallbackEvents() {
+        return this.llmOrchestrator.getFallbackEvents();
+    }
+
+    /**
+     * Get import issues found during generation
+     */
+    getImportIssues(): JobIssue[] {
+        return this.importIssues;
     }
 }

@@ -1,103 +1,50 @@
 // @ts-nocheck
-import { test, expect, request, APIRequestContext } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
-test.describe('API Health End-to-End Tests', () => {
-  let apiContext: APIRequestContext;
+const BASE_URL = 'http://localhost:3000'; // Update with your server URL
 
-  test.beforeAll(async ({ playwright }) => {
-    // Setup APIRequestContext to interact with API endpoints
-    apiContext = await request.newContext({
-      baseURL: 'http://localhost:3000', // Change if your API runs on a different URL or port
-      // Add headers or auth if required here
-    });
+// Assuming the health check does not require authentication
+test.describe('API Health Check', () => {
+  test.beforeAll(async ({ request }) => {
+    // If any setup is needed before all tests, place it here
+    // For example, starting a server, or setting up a database
   });
 
-  test.afterAll(async () => {
-    await apiContext.dispose();
+  test.afterAll(async ({ request }) => {
+    // If any teardown is needed after all tests, place it here
+    // For example, stopping a server, or cleaning up a database
   });
 
-  test('Health check - /health endpoint should respond with status 200 and correct body', async () => {
-    const response = await apiContext.get('/health');
+  test('should return 200 OK for /health endpoint', async ({ request }) => {
+    const response = await request.get(`${BASE_URL}/health`);
     expect(response.status()).toBe(200);
-
-    const body = await response.json();
-    // Assuming body contains { status: 'ok' } or similar
-    expect(body).toBeDefined();
-    expect(body).toHaveProperty('status');
-    expect(body.status).toMatch(/ok|healthy|up/i);
+    const responseBody = await response.json();
+    expect(responseBody).toHaveProperty('status', 'ok');
   });
 
-  test('API base check - /api endpoint should respond appropriately', async () => {
-    const response = await apiContext.get('/api');
-    // Depending on your API design, this might be a 200 or a redirection or a 404
-    expect(response.status()).toBeGreaterThanOrEqual(200);
-    expect(response.status()).toBeLessThan(400);
-
-    const contentType = response.headers()['content-type'] || '';
-    expect(contentType).toContain('application/json');
-
-    const body = await response.json();
-    expect(body).toBeDefined();
-    // Expect some predefined properties in the API root response
-    // Example: { message: "API entry point" } or a list of endpoints
-    expect(body).toHaveProperty('message');
+  test('should return 200 OK for /api endpoint', async ({ request }) => {
+    const response = await request.get(`${BASE_URL}/api`);
+    expect(response.status()).toBe(200);
+    const responseBody = await response.json();
+    expect(responseBody).toHaveProperty('message', 'API is running');
   });
 
-  test('Error handling - invalid endpoint should return 404', async () => {
-    const response = await apiContext.get('/api/invalid-endpoint');
-    expect(response.status()).toBe(404);
-
-    const body = await response.json().catch(() => null);
-    if (body) {
-      // Optional: Verify error message structure
-      expect(body).toHaveProperty('error');
-    }
+  test('should handle unexpected server errors gracefully', async ({ request }) => {
+    // This test assumes that the server can be made to error out in a controlled way.
+    // If your server does not have a way to do this, you might need to mock the response instead.
+    // Using a mock server or a mock request would be a more consistent approach.
+    const response = await request.get(`${BASE_URL}/nonexistent`);
+    expect(response.status()).toBe(404); // or whatever error code you expect
+    const responseBody = await response.json();
+    expect(responseBody).toHaveProperty('error', 'Not Found'); // Adjust based on expected response
   });
 
-  test('Full API health user flow with authentication if required', async () => {
-    // Step 1: Authenticate user if needed - mock credentials here
-    // For demonstration assume JWT based auth - if no auth required, skip this block
-    // Adjust the login endpoint and payload to your implementation
-
-    // This block should be commented or adapted if auth is not required
-    /*
-    const loginResponse = await apiContext.post('/api/auth/login', {
-      data: { username: 'testuser', password: 'testpassword' },
-    });
-    expect(loginResponse.status()).toBe(200);
-    const loginBody = await loginResponse.json();
-    expect(loginBody).toHaveProperty('token');
-    const token = loginBody.token;
-
-    // Create new context with auth token
-    apiContext = await request.newContext({
-      baseURL: 'http://localhost:3000',
-      extraHTTPHeaders: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-    */
-
-    // Step 2: Check /health endpoint with authenticated context (or unauthenticated if no auth)
-    const healthResponse = await apiContext.get('/health');
-    expect(healthResponse.status()).toBe(200);
-    const healthBody = await healthResponse.json();
-    expect(healthBody).toHaveProperty('status');
-    expect(healthBody.status).toMatch(/ok|healthy|up/i);
-
-    // Step 3: Check /api endpoint accessibility
-    const apiResponse = await apiContext.get('/api');
-    expect(apiResponse.status()).toBeLessThan(400);
-    const apiBody = await apiResponse.json();
-    expect(apiBody).toHaveProperty('message');
-
-    // Step 4: Verify that authorization failure returns 401 or 403 - simulate by hitting protected endpoint without valid auth
-    /*
-    const unauthApiContext = await request.newContext({
-      baseURL: 'http://localhost:3000',
-    });
-    const protectedResponse = await unauthApiContext.get('/api/protected-resource');
-    expect([401, 403]).toContain(protectedResponse.status());
-    */
-  });
+  // If authentication is required, include tests for that here.
+  // For example, if a token is needed, you might have a test that:
+  // - Sends a request without a token and expects a 401 Unauthorized
+  // - Sends a request with an invalid token and expects a 401 Unauthorized
+  // - Sends a request with a valid token and expects a 200 OK
 });
+
+// If additional error scenarios or edge cases need to be tested, include them here.
+// For example, testing with various payload structures, query parameters, etc.

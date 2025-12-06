@@ -52,24 +52,23 @@ llm:
 
 ```
 
-## LLM Configuration (Cost-Optimized Multi-Model Strategy)
+## LLM Configuration (Stable Paid Models)
 
-This project uses OpenRouter with an intelligent **balanced multi-model strategy** to minimize costs while maintaining high-quality test generation.
+This project uses OpenRouter with **stable, paid models** for reliable operation without rate limits.
 
-### 🎯 Balanced Mode (Recommended)
+### 🎯 Recommended Configuration
 
-The testbot automatically routes tasks to appropriate models:
+The testbot uses task-specific models for optimal cost/quality:
 
-- **Planning & Strategy** → Hermes 405B (strong reasoning)
-- **Code Generation** → Gemini Flash (fast, capable, **FREE!**)
-- **Test Healing** → Gemini Flash (fast, capable, **FREE!**)
-- **Analysis & Transforms** → Llama 3.2 3B (quick, **FREE!**)
-- **Long Context (>100k tokens)** → Auto-detected, uses appropriate model
+- **Planning & Strategy** → Claude 3.5 Sonnet (best reasoning)
+- **Code Generation** → Qwen 2.5 Coder 32B (excellent code quality, low cost)
+- **Test Healing** → Qwen 2.5 Coder 32B (fast iterations)
+- **Long Context (>100k tokens)** → Llama 3.3 70B (efficient for large codebases)
 
 **Cost Profile:**
-- 90%+ of operations use **free models**
-- Only complex planning uses premium models
-- **Estimated cost: <$0.20 per run** (vs $2-5 with GPT-4 only)
+- **Estimated cost: $0.20-1.00 per run**
+- No rate limits or availability issues
+- Consistent, predictable performance
 
 ### Setup
 
@@ -80,23 +79,34 @@ The testbot automatically routes tasks to appropriate models:
 # Required
 OPENROUTER_API_KEY=your_api_key_here
 
-# Balanced Mode (default, recommended)
+# Recommended stable paid models
+LLM_MODE=balanced
+LLM_MODEL_PLANNER=anthropic/claude-3.5-sonnet
+LLM_MODEL_CODER=qwen/qwen-2.5-coder-32b-instruct
+LLM_MODEL_LONG_CONTEXT=meta-llama/llama-3.3-70b-instruct
+LLM_MODEL_HELPER=qwen/qwen-2.5-coder-32b-instruct
 
+# Primary fallback
+OPENROUTER_MODEL=qwen/qwen-2.5-coder-32b-instruct
+
+# Secondary fallback (if primary fails)
+OPENROUTER_MODEL_FALLBACK=meta-llama/llama-3.1-8b-instruct
 
 # Token Budget
-LLM_MAX_TOKENS_PER_RUN=1000000
+LLM_MAX_TOKENS_PER_RUN=250000
 LLM_TOKEN_WARN_THRESHOLD=0.8
 ```
 
-### Alternative Modes
-
-**Cheap Mode** (all free):
-```env
-LLM_MODE=cheap
-OPENROUTER_MODEL=meta-llama/llama-3.2-3b-instruct:free
+3. **Run the bot**:
+```bash
+npm install
+npm run build
+npm run self-check  # Validates the bot on itself
 ```
 
-**Premium Mode** (maximum quality):
+### Alternative: Premium Mode
+
+For maximum quality (higher cost ~$2-5/run):
 ```env
 LLM_MODE=premium
 OPENROUTER_MODEL=openai/gpt-4o
@@ -108,6 +118,7 @@ Every HTML report includes a **🤖 LLM Usage Statistics** section showing:
 - Total tokens used
 - Model-by-model breakdown with call counts
 - Task-type breakdown (generate, heal, plan, analyze)
+- **Final model used** (after any fallbacks)
 - Cost implications
 
 ## Architecture

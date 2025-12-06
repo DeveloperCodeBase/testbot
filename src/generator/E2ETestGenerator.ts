@@ -6,6 +6,10 @@ import { BotConfig } from '../config/schema';
 import { writeFile } from '../utils/fileUtils';
 import logger from '../utils/logger';
 import path from 'path';
+import { PathNormalizer } from '../utils/PathNormalizer';
+import { ImportSanityGate } from '../validator/ImportSanityGate';
+import { TestQualityGate } from '../validator/TestQualityGate';
+import { JobIssue } from '../models/TestRunResult';
 
 /**
  * Generates end-to-end tests for user flows
@@ -13,6 +17,7 @@ import path from 'path';
 export class E2ETestGenerator {
     private llmOrchestrator: LLMOrchestrator;
     private adapterRegistry: AdapterRegistry;
+    private importIssues: JobIssue[] = [];
 
     constructor(config: BotConfig) {
         this.llmOrchestrator = new LLMOrchestrator(config.llm);
@@ -111,11 +116,46 @@ export class E2ETestGenerator {
                     }
 
                     // Don't include testDir if it's just '.' to avoid issues
-                    const testPath = testDir === '.'
-                        ? path.join(projectPath, 'tests', 'e2e', filename)
-                        : path.join(projectPath, testDir, filename);
+                    const testDirRelative = testDir === '.' ? path.join('tests', 'e2e') : testDir;
+                    const relativePath = path.join(testDirRelative, filename);
+                    const testPath = PathNormalizer.normalizeFilePath(projectPath, relativePath);
 
-                    await writeFile(testPath, content);
+                    // Validate imports before writing
+                    const validation = await ImportSanityGate.validateOrSkip(testPath, content, projectPath);
+                    if (!validation.shouldWrite) {
+                        logger.warn(`Skipping ${testPath}: ${validation.skippedReason}`);
+                        this.importIssues.push({
+                            project: project.name,
+                            stage: 'generate',
+                            kind: 'GENERATION_IMPORT_UNRESOLVABLE',
+                            severity: 'warning',
+                            message: `Skipped E2E test: ${validation.skippedReason}`,
+                            suggestion: 'Review import paths or fix source file structure',
+                            details: validation.issues.join('; ')
+                        });
+                        continue;
+                    }
+
+                    await writeFile(testPath, validation.fixedContent || content);
+
+                    // Quality Gate Check
+                    const qualityResult = await TestQualityGate.checkGeneratedTest(testPath, projectPath);
+                    if (!qualityResult.passed && !qualityResult.fixed) {
+                        this.importIssues.push({
+                            project: project.name,
+                            stage: 'generate',
+                            kind: qualityResult.quarantined ? 'TEST_QUARANTINED' : 'TEST_QUALITY_GATE_FAILED',
+                            severity: 'warning',
+                            message: qualityResult.quarantined ? `Test quarantined due to errors: ${testPath}` : `Test quality gate failed: ${testPath}`,
+                            suggestion: 'Fix TypeScript errors in generated test or review source types',
+                            details: qualityResult.issues.join('; ')
+                        });
+
+                        if (qualityResult.quarantined) {
+                            continue;
+                        }
+                    }
+
                     generatedFiles.push(testPath);
                     logger.info(`Generated E2E test: ${testPath}`);
                 }
@@ -237,5 +277,19 @@ Test should cover the complete flow end-to-end, including:
 - All intermediate steps
 - Expected outcomes
 - Error scenarios`;
+    }
+
+    /**
+     * Get fallback events
+     */
+    getFallbackEvents() {
+        return this.llmOrchestrator.getFallbackEvents();
+    }
+
+    /**
+     * Get import issues found during generation
+     */
+    getImportIssues(): JobIssue[] {
+        return this.importIssues;
     }
 }

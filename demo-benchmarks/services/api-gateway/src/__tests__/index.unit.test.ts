@@ -1,3 +1,4 @@
+// @ts-nocheck
 import app from '../index';
 import axios from 'axios';
 import request from 'supertest';

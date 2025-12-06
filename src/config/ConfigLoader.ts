@@ -4,11 +4,52 @@ import yaml from 'js-yaml';
 import { BotConfig, DEFAULT_CONFIG } from './schema';
 import { fileExists } from '../utils/fileUtils';
 import logger from '../utils/logger';
+import { JobIssue } from '../models/TestRunResult';
 
 /**
  * Load and validate configuration
  */
+export interface ConfigDiagnostics {
+    configSource: string;
+    modelsRequested: {
+        default?: string;
+        planner?: string;
+        coder?: string;
+        long_context?: string;
+        helper?: string;
+        fallback?: string;
+        secondary_fallback?: string;
+    };
+    modelsResolved: {
+        default: string;
+        planner?: string;
+        coder?: string;
+        long_context?: string;
+        helper?: string;
+        fallback?: string;
+        secondary_fallback?: string;
+    };
+    fallbacksApplied: Array<{ field: string; original: string; resolved: string; reason: string }>;
+    issues: JobIssue[]; // Config-related issues for JobResult
+}
+
 export class ConfigLoader {
+    private configSource: string = 'defaults';
+    private modelsRequested: ConfigDiagnostics['modelsRequested'] = {};
+    private fallbacksApplied: ConfigDiagnostics['fallbacksApplied'] = [];
+    private configIssues: JobIssue[] = []; // Track config issues
+
+    // Safe paid model defaults
+    private readonly SAFE_DEFAULTS = {
+        default: 'qwen/qwen-2.5-coder-32b-instruct',
+        planner: 'anthropic/claude-3.5-sonnet',
+        coder: 'qwen/qwen-2.5-coder-32b-instruct',
+        long_context: 'meta-llama/llama-3.3-70b-instruct',
+        helper: 'qwen/qwen-2.5-coder-32b-instruct',
+        fallback: 'qwen/qwen-2.5-coder-32b-instruct',
+        secondary_fallback: 'meta-llama/llama-3.1-8b-instruct'
+    };
+
     /**
      * Load configuration from file or use defaults
      */
@@ -18,13 +59,18 @@ export class ConfigLoader {
         // Load from file if provided
         if (configPath) {
             config = await this.loadFromFile(configPath);
+            this.configSource = configPath;
         } else {
             // Try to find .ai-test-bot.yml in current directory
             const defaultPath = path.join(process.cwd(), '.ai-test-bot.yml');
             if (await fileExists(defaultPath)) {
                 config = await this.loadFromFile(defaultPath);
+                this.configSource = defaultPath;
             }
         }
+
+        // Record requested models before validation
+        this.recordRequestedModels(config);
 
         // Merge with defaults
         const mergedConfig = this.mergeWithDefaults(config);
@@ -32,8 +78,32 @@ export class ConfigLoader {
         // Override with environment variables
         this.applyEnvironmentOverrides(mergedConfig);
 
-        logger.info('Configuration loaded successfully');
+        // Validate and resolve models (auto-fallback instead of throwing)
+        this.validateAndResolveModels(mergedConfig);
+
+        logger.info(`Configuration loaded successfully from: ${this.configSource}`);
         return mergedConfig;
+    }
+
+    /**
+     * Get config diagnostics
+     */
+    getDiagnostics(): ConfigDiagnostics {
+        return {
+            configSource: this.configSource,
+            modelsRequested: this.modelsRequested,
+            modelsResolved: {
+                default: this.SAFE_DEFAULTS.default,
+                planner: this.SAFE_DEFAULTS.planner,
+                coder: this.SAFE_DEFAULTS.coder,
+                long_context: this.SAFE_DEFAULTS.long_context,
+                helper: this.SAFE_DEFAULTS.helper,
+                fallback: this.SAFE_DEFAULTS.fallback,
+                secondary_fallback: this.SAFE_DEFAULTS.secondary_fallback
+            },
+            fallbacksApplied: this.fallbacksApplied,
+            issues: this.configIssues
+        };
     }
 
     /**
@@ -133,32 +203,101 @@ export class ConfigLoader {
         if (process.env.VERBOSE === 'true') {
             config.output.verbose = true;
         }
-
-        this.validateConfig(config);
     }
 
     /**
-     * Validate configuration
+     * Record requested models before validation
      */
-    private validateConfig(config: BotConfig): void {
+    private recordRequestedModels(config: Partial<BotConfig>): void {
+        this.modelsRequested = {
+            default: config.llm?.model,
+            planner: config.llm?.models?.planner,
+            coder: config.llm?.models?.coder,
+            long_context: config.llm?.models?.long_context,
+            helper: config.llm?.models?.helper
+        };
+    }
+
+    /**
+     * Validate and resolve models - auto-fallback instead of throwing errors
+     */
+    private validateAndResolveModels(config: BotConfig): void {
         // Validate API Key
         if (config.llm.provider === 'openrouter' && !config.llm.api_key) {
             throw new Error('Missing OPENROUTER_API_KEY. Please set it in your .env file.');
         }
 
-        // Validate Models (No :free allowed)
-        const validateModel = (model?: string, name?: string) => {
-            if (model && model.endsWith(':free')) {
-                throw new Error(`Model ${name || ''} (${model}) is a free tier model (:free). Production mode requires paid models.`);
+        // Auto-resolve invalid models
+        const resolveModel = (model: string | undefined, field: string, safeFallback: string): string => {
+            if (!model) {
+                return safeFallback;
             }
+
+            // Check for :free suffix
+            if (model.endsWith(':free')) {
+                logger.warn(`❌ Model ${field} (${model}) is a free tier model. Auto-fallback to: ${safeFallback}`);
+                this.fallbacksApplied.push({
+                    field,
+                    original: model,
+                    resolved: safeFallback,
+                    reason: 'Free tier model not allowed in production'
+                });
+
+                // Create JobIssue for this fallback
+                this.configIssues.push({
+                    project: 'global',
+                    stage: 'config',
+                    kind: 'CONFIG_MODEL_FALLBACK_APPLIED',
+                    severity: 'warning',
+                    message: `Model '${field}' configured as '${model}' (free tier) was replaced with '${safeFallback}'`,
+                    suggestion: 'Use paid models for production. Remove :free suffix or configure a paid model.',
+                    details: `Source: ${this.configSource}. Original: ${model}, Resolved: ${safeFallback}`
+                });
+
+                return safeFallback;
+            }
+
+            // Check for invalid model ID patterns
+            if (!model.includes('/')) {
+                logger.warn(`❌ Model ${field} (${model}) has invalid format (missing provider/). Auto-fallback to: ${safeFallback}`);
+                this.fallbacksApplied.push({
+                    field,
+                    original: model,
+                    resolved: safeFallback,
+                    reason: 'Invalid model ID format'
+                });
+
+                // Create JobIssue for this fallback
+                this.configIssues.push({
+                    project: 'global',
+                    stage: 'config',
+                    kind: 'CONFIG_MODEL_FALLBACK_APPLIED',
+                    severity: 'warning',
+                    message: `Model '${field}' configured as '${model}' (invalid format) was replaced with '${safeFallback}'`,
+                    suggestion: 'Model IDs must include provider prefix (e.g., provider/model-name)',
+                    details: `Source: ${this.configSource}. Original: ${model}, Resolved: ${safeFallback}`
+                });
+
+                return safeFallback;
+            }
+
+            return model;
         };
 
-        validateModel(config.llm.model, 'default');
-        if (config.llm.models) {
-            validateModel(config.llm.models.planner, 'planner');
-            validateModel(config.llm.models.coder, 'coder');
-            validateModel(config.llm.models.long_context, 'long_context');
-            validateModel(config.llm.models.helper, 'helper');
+        // Resolve all models
+        config.llm.model = resolveModel(config.llm.model, 'default', this.SAFE_DEFAULTS.default);
+
+        if (!config.llm.models) {
+            config.llm.models = {};
+        }
+        config.llm.models.planner = resolveModel(config.llm.models.planner, 'planner', this.SAFE_DEFAULTS.planner);
+        config.llm.models.coder = resolveModel(config.llm.models.coder, 'coder', this.SAFE_DEFAULTS.coder);
+        config.llm.models.long_context = resolveModel(config.llm.models.long_context, 'long_context', this.SAFE_DEFAULTS.long_context);
+        config.llm.models.helper = resolveModel(config.llm.models.helper, 'helper', this.SAFE_DEFAULTS.helper);
+
+        // Log summary if any fallbacks were applied
+        if (this.fallbacksApplied.length > 0) {
+            logger.warn(`⚠️  Applied ${this.fallbacksApplied.length} model fallback(s) - see JobResult.issues for details`);
         }
     }
 }

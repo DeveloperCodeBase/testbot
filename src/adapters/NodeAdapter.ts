@@ -43,11 +43,11 @@ export class NodeAdapter implements LanguageAdapter {
 
         if (framework === 'jest') {
             if (testType === 'unit') {
-                return `${pm} test -- --testPathPattern="src/.*__tests__"`;
+                return `${pm} test -- --testPathPatterns="src/.*__tests__"`;
             } else if (testType === 'integration') {
-                return `${pm} test -- --testPathPattern=".*\\.integration\\.test"`;
+                return `${pm} test -- --testPathPatterns=".*\\.integration\\.test"`;
             } else if (testType === 'e2e') {
-                return `${pm} test -- --testPathPattern="e2e"`;
+                return `${pm} test -- --testPathPatterns="e2e"`;
             }
         } else if (framework === 'mocha') {
             if (testType === 'unit') {

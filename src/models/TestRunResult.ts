@@ -40,11 +40,20 @@ export interface TestRunResult {
 
 /**
  * Represents a structured issue in the job execution
+ * 
+ * Common issue kinds:
+ * - CONFIG_MODEL_FALLBACK_APPLIED: Free or invalid model replaced with paid fallback
+ * - GENERATION_IMPORT_UNRESOLVABLE: Test skipped due to unresolvable imports
+ * - JEST_ESM_DEP_FIX_APPLIED: ESM dependency mocking injected
+ * - TEST_QUALITY_GATE_FAILED: Generated test failed lint/tsc checks
+ * - TEST_QUARANTINED: Test isolated due to quality issues
+ * - COVERAGE_BELOW_THRESHOLD: Coverage doesn't meet threshold
+ * - LLM_CALL_FAILED: LLM API call failed
  */
 export interface JobIssue {
     id?: string;        // Unique identifier for tracking
     project: string;
-    stage: 'env_heal' | 'generate' | 'execute' | 'coverage' | 'refine' | 'llm';
+    stage: 'env_heal' | 'generate' | 'execute' | 'coverage' | 'refine' | 'llm' | 'config';
     kind: string;  // e.g. 'JEST_MISSING_PACKAGE', 'TEST_TS_ERROR', 'COVERAGE_BELOW_THRESHOLD', 'LLM_CALL_FAILED'
     severity: 'info' | 'warning' | 'error';
     message: string;
@@ -93,5 +102,24 @@ export interface JobResult {
         taskBreakdown: {
             [taskType: string]: number; // token count per task type
         };
+        modelFinal?: string; // Final model used after fallbacks (for reporting)
+    };
+    modelDiagnostics?: {         // Model configuration diagnostics
+        configSource: string;
+        modelsRequested: {
+            default?: string;
+            planner?: string;
+            coder?: string;
+            long_context?: string;
+            helper?: string;
+        };
+        modelsResolved: {
+            default: string;
+            planner?: string;
+            coder?: string;
+            long_context?: string;
+            helper?: string;
+        };
+        fallbacksApplied: Array<{ field: string; original: string; resolved: string; reason: string }>;
     };
 }
